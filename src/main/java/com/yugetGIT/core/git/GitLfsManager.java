@@ -10,9 +10,12 @@ import java.util.List;
 public final class GitLfsManager {
 
     private static final List<String> REQUIRED_PATTERNS = Arrays.asList(
+        "staging/screenshots/**/*.png"
+    );
+
+    private static final List<String> LEGACY_PATTERNS = Arrays.asList(
         "staging/**/*.nbt",
         "staging/**/*.mca",
-        "staging/screenshots/**/*.png",
         "meta/**/*.dat"
     );
 
@@ -32,6 +35,15 @@ public final class GitLfsManager {
         GitExecutor.GitResult installResult = GitExecutor.execute(repoDir, 15, "lfs", "install", "--local");
         if (!installResult.isSuccess()) {
             throw new RuntimeException("Failed to initialize Git-LFS hooks: " + installResult.stderr);
+        }
+
+        for (String legacyPattern : LEGACY_PATTERNS) {
+            if (hasTrackingRule(repoDir, legacyPattern)) {
+                GitExecutor.GitResult untrackResult = GitExecutor.execute(repoDir, 15, "lfs", "untrack", legacyPattern);
+                if (!untrackResult.isSuccess()) {
+                    throw new RuntimeException("Failed to untrack legacy LFS pattern '" + legacyPattern + "': " + untrackResult.stderr);
+                }
+            }
         }
 
         if (!hasRequiredTrackingRules(repoDir)) {
@@ -65,6 +77,36 @@ public final class GitLfsManager {
             return true;
         } catch (Exception e) {
             return false;
+        }
+    }
+
+    private static boolean hasTrackingRule(File repoDir, String pattern) {
+        File attributesFile = new File(repoDir, ".gitattributes");
+        if (!attributesFile.exists()) {
+            return false;
+        }
+
+        try {
+            String content = new String(Files.readAllBytes(attributesFile.toPath()), StandardCharsets.UTF_8);
+            return content.contains(pattern);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static void pruneLocalCacheIfAvailable(File repoDir) {
+        if (!StateProperties.isGitLfsAvailable()) {
+            return;
+        }
+
+        try {
+            GitExecutor.GitResult versionResult = GitExecutor.execute(repoDir, 15, "lfs", "version");
+            if (!versionResult.isSuccess()) {
+                return;
+            }
+
+            GitExecutor.execute(repoDir, 60, "lfs", "prune", "--no-verify-remote");
+        } catch (Exception ignored) {
         }
     }
 }

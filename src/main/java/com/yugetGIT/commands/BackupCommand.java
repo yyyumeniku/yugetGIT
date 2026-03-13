@@ -17,8 +17,12 @@ import com.yugetGIT.core.git.CommitBuilder;
 import com.yugetGIT.core.git.GitExecutor;
 import com.yugetGIT.core.git.GitLfsManager;
 import com.yugetGIT.core.git.RepoConfig;
+import com.yugetGIT.config.yugetGITConfig;
+import com.yugetGIT.util.BackgroundExecutor;
+import com.yugetGIT.util.SaveEventGuard;
 import com.yugetGIT.util.BlockEntitySnapshotManager;
 import com.yugetGIT.util.EntitySnapshotManager;
+import com.yugetGIT.util.SaveProgressTracker;
 import org.apache.commons.io.FileUtils;
 
 import java.io.File;
@@ -27,13 +31,46 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import java.util.function.Consumer;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class BackupCommand extends CommandBase {
+
+    private static final double MANUAL_SAVE_MIN_MOVEMENT_SQ = 9.0D;
+    private static final Map<String, ManualSaveBaseline> MANUAL_SAVE_BASELINES = new ConcurrentHashMap<>();
+
+    private static final class ManualSaveBaseline {
+        private final double x;
+        private final double y;
+        private final double z;
+
+        private ManualSaveBaseline(double x, double y, double z) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+    }
+
+    private static final class PreparationResult {
+        private final boolean success;
+        private final boolean previousDisableLevelSaving;
+        private final String errorMessage;
+
+        private PreparationResult(boolean success, boolean previousDisableLevelSaving, String errorMessage) {
+            this.success = success;
+            this.previousDisableLevelSaving = previousDisableLevelSaving;
+            this.errorMessage = errorMessage;
+        }
+    }
 
     @Override
     public String getName() {
@@ -42,7 +79,7 @@ public class BackupCommand extends CommandBase {
 
     @Override
     public String getUsage(ICommandSender sender) {
-        return "/backup <help|save|list|worlds|restore|delete|push|pull|status>";
+        return "/backup <help|save|fsave|list|worlds|restore|delete|push|pull|status>";
     }
     
     @Override
@@ -69,6 +106,7 @@ public class BackupCommand extends CommandBase {
         List<String> looseTokens = new ArrayList<>();
         boolean valid = true;
         String error = "";
+        boolean force = false;
         
         static ParsedArgs parse(String[] args, boolean strictTokens) {
             ParsedArgs p = new ParsedArgs();
@@ -76,6 +114,7 @@ public class BackupCommand extends CommandBase {
                 String a = args[i].toLowerCase();
                 if (a.equals("-all")) p.all = true;
                 else if (a.equals("-start")) p.start = true;
+            else if (a.equals("-force")) p.force = true;
                 else if (a.equals("-hash")) {
                     if (i + 1 >= args.length) {
                         p.valid = false;
@@ -160,9 +199,12 @@ public class BackupCommand extends CommandBase {
                 sendHelp(sender);
                 break;
             case "save":
-                sender.sendMessage(formatMessage(TextFormatting.WHITE, "Saving world state..."));
                 String message = parsed.userString != null ? parsed.userString : "Manual save";
-                runManualSave(server, sender, repoDir, worldDir, message);
+                runManualSave(server, sender, repoDir, worldDir, message, parsed.force);
+                break;
+            case "fsave":
+                String forcedMessage = parsed.userString != null ? parsed.userString : "Manual save";
+                runManualSave(server, sender, repoDir, worldDir, forcedMessage, true);
                 break;
                 
             case "list":
@@ -174,7 +216,9 @@ public class BackupCommand extends CommandBase {
                     GitExecutor.GitResult result = GitExecutor.execute(repoDir, 10, "log", "--oneline");
                     if (result.isSuccess() && !result.stdout.trim().isEmpty()) {
                         List<String> lines = new ArrayList<>(Arrays.asList(result.stdout.trim().split("\n")));
-                        Collections.reverse(lines); // oldest -> newest
+                        if (parsed.start) {
+                            Collections.reverse(lines); // oldest -> newest when explicitly requested
+                        }
 
                         int total = lines.size();
                         int limit = parsed.count == -1 ? 10 : parsed.count;
@@ -182,7 +226,7 @@ public class BackupCommand extends CommandBase {
                         sender.sendMessage(formatMessage(TextFormatting.WHITE, "Showing " + showCount + " / " + total + " commits."));
 
                         for (int displayIndex = 0; displayIndex < showCount; displayIndex++) {
-                            int restoreNumber = displayIndex + 1;
+                            int restoreNumber = parsed.start ? (displayIndex + 1) : (total - displayIndex);
                             String logLine = lines.get(displayIndex).trim();
                             if (!logLine.isEmpty()) {
                                 String[] parts = logLine.split(" ", 2);
@@ -346,6 +390,8 @@ public class BackupCommand extends CommandBase {
 
     private void sendHelp(ICommandSender sender) {
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup save -m \"message text\""));
+        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup fsave -m \"message text\""));
+        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup save [-force] -m \"message text\""));
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup list [-all] [-start] [-(number)]"));
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup restore [-hash <id>] [-(number)]"));
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup delete [-all] [-hash <id>] [-(number)]"));
@@ -368,7 +414,17 @@ public class BackupCommand extends CommandBase {
         }
     }
 
-    private void runManualSave(MinecraftServer server, ICommandSender sender, File repoDir, File worldDir, String message) {
+    private void runManualSave(MinecraftServer server, ICommandSender sender, File repoDir, File worldDir, String message, boolean force) {
+        String worldKey = worldDir.getName();
+        if (!force
+            && yugetGITConfig.backup.manualSaveMovementGuardEnabled
+            && !hasMeaningfulManualSaveMovement(server, worldKey)) {
+            sender.sendMessage(formatMessage(TextFormatting.YELLOW, "No changes detected, backup skipped. If you still want a backup, use /backup fsave."));
+            return;
+        }
+
+        sender.sendMessage(formatMessage(TextFormatting.WHITE, force ? "Starting forced backup..." : "Starting backup..."));
+
         if (!repoDir.exists() && !repoDir.mkdirs()) {
             sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to create world backup directory."));
             return;
@@ -399,26 +455,112 @@ public class BackupCommand extends CommandBase {
             return;
         }
 
-        boolean wasSavingDisabled = activeWorld.disableLevelSaving;
-        try {
-            activeWorld.saveAllChunks(true, null);
-            activeWorld.disableLevelSaving = true;
-            EntitySnapshotManager.capture(server, repoDir);
-            BlockEntitySnapshotManager.capture(server, repoDir);
-        } catch (Exception e) {
-            activeWorld.disableLevelSaving = wasSavingDisabled;
-            sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to flush world/entity state before commit."));
+        BossInfoServer bossBar = createBossBarFor(sender);
+        SaveProgressTracker.start("Preparing world save", 0, "Flushing chunks and snapshotting entities");
+
+        BackgroundExecutor.execute(() -> {
+            PreparationResult prep = prepareWorldStateForBackup(server, activeWorld, repoDir);
+            if (!prep.success) {
+                SaveProgressTracker.finish(false, prep.errorMessage);
+                try {
+                    server.addScheduledTask(() -> {
+                        sender.sendMessage(formatMessage(TextFormatting.RED, prep.errorMessage));
+                        clearBossBar(sender, bossBar);
+                    });
+                } catch (Exception ignored) {
+                }
+                return;
+            }
+
+            Consumer<String> feedback = msg -> sendProgress(sender, msg);
+            Consumer<CommitBuilder.ProgressSnapshot> progress = snapshot -> {
+                SaveProgressTracker.update(snapshot.getStage(), snapshot.getPercent(), snapshot.getChangedChunks(), snapshot.getBytesWritten());
+                updateBossBar(server, sender, bossBar, snapshot);
+            };
+            Runnable completion = () -> {
+                markManualSaveBaseline(server, worldKey);
+                restoreSavingFlag(server, activeWorld, prep.previousDisableLevelSaving);
+                clearBossBar(sender, bossBar);
+            };
+
+            new CommitBuilder(repoDir, worldDir, message).commitAsync(feedback, progress, completion);
+        });
+    }
+
+    private boolean hasMeaningfulManualSaveMovement(MinecraftServer server, String worldKey) {
+        EntityPlayerMP player = getPrimaryPlayer(server);
+        if (player == null) {
+            return true;
+        }
+
+        ManualSaveBaseline baseline = MANUAL_SAVE_BASELINES.get(worldKey);
+        if (baseline == null) {
+            return true;
+        }
+
+        double dx = player.posX - baseline.x;
+        double dy = player.posY - baseline.y;
+        double dz = player.posZ - baseline.z;
+        return (dx * dx + dy * dy + dz * dz) >= MANUAL_SAVE_MIN_MOVEMENT_SQ;
+    }
+
+    private void markManualSaveBaseline(MinecraftServer server, String worldKey) {
+        EntityPlayerMP player = getPrimaryPlayer(server);
+        if (player == null) {
             return;
         }
 
-        BossInfoServer bossBar = createBossBarFor(sender);
-        Consumer<String> feedback = msg -> sendProgress(sender, msg);
-        Consumer<CommitBuilder.ProgressSnapshot> progress = snapshot -> updateBossBar(server, sender, bossBar, snapshot);
-        Runnable completion = () -> server.addScheduledTask(() -> {
-            activeWorld.disableLevelSaving = wasSavingDisabled;
-            clearBossBar(sender, bossBar);
-        });
-        new CommitBuilder(repoDir, worldDir, message).commitAsync(feedback, progress, completion);
+        MANUAL_SAVE_BASELINES.put(worldKey, new ManualSaveBaseline(player.posX, player.posY, player.posZ));
+    }
+
+    private EntityPlayerMP getPrimaryPlayer(MinecraftServer server) {
+        if (server == null || server.getPlayerList() == null || server.getPlayerList().getPlayers().isEmpty()) {
+            return null;
+        }
+        return server.getPlayerList().getPlayers().get(0);
+    }
+
+    private PreparationResult prepareWorldStateForBackup(MinecraftServer server, WorldServer activeWorld, File repoDir) {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicBoolean success = new AtomicBoolean(false);
+        AtomicBoolean previousDisableSaving = new AtomicBoolean(activeWorld.disableLevelSaving);
+        AtomicReference<String> error = new AtomicReference<>("Failed to flush world/entity state before commit.");
+
+        try {
+            server.addScheduledTask(() -> {
+                try {
+                    previousDisableSaving.set(activeWorld.disableLevelSaving);
+                    SaveEventGuard.enter();
+                    activeWorld.saveAllChunks(true, null);
+                    activeWorld.disableLevelSaving = true;
+                    EntitySnapshotManager.capture(server, repoDir);
+                    BlockEntitySnapshotManager.capture(server, repoDir);
+                    success.set(true);
+                } catch (Exception e) {
+                    activeWorld.disableLevelSaving = previousDisableSaving.get();
+                    error.set("Failed to flush world/entity state before commit: " + e.getMessage());
+                } finally {
+                    SaveEventGuard.exit();
+                    latch.countDown();
+                }
+            });
+
+            boolean completed = latch.await(180, TimeUnit.SECONDS);
+            if (!completed) {
+                return new PreparationResult(false, previousDisableSaving.get(), "Timed out while preparing world save.");
+            }
+            return new PreparationResult(success.get(), previousDisableSaving.get(), error.get());
+        } catch (Exception e) {
+            return new PreparationResult(false, previousDisableSaving.get(), "Failed to schedule world snapshot task: " + e.getMessage());
+        }
+    }
+
+    private void restoreSavingFlag(MinecraftServer server, WorldServer world, boolean previousDisableLevelSaving) {
+        try {
+            server.addScheduledTask(() -> world.disableLevelSaving = previousDisableLevelSaving);
+        } catch (Exception ignored) {
+            world.disableLevelSaving = previousDisableLevelSaving;
+        }
     }
 
     private void sendProgress(ICommandSender sender, String message) {
@@ -456,27 +598,37 @@ public class BackupCommand extends CommandBase {
             return;
         }
 
-        server.addScheduledTask(() -> {
-            float progress = Math.max(0.0f, Math.min(1.0f, snapshot.getPercent() / 100.0f));
-            bar.setPercent(progress);
+        try {
+            server.addScheduledTask(() -> {
+                float progress = Math.max(0.0f, Math.min(1.0f, snapshot.getPercent() / 100.0f));
+                bar.setPercent(progress);
 
-            double mb = snapshot.getBytesWritten() / (1024.0 * 1024.0);
-            String title = String.format(
-                "%s %d%% | chunks %d | %.2f MB",
-                snapshot.getStage(),
-                snapshot.getPercent(),
-                snapshot.getChangedChunks(),
-                mb
-            );
-            bar.setName(new TextComponentString(TextFormatting.LIGHT_PURPLE + title));
-        });
+                double mb = snapshot.getBytesWritten() / (1024.0 * 1024.0);
+                String title = String.format(
+                    "%s %d%% | chunks %d | %.2f MB",
+                    snapshot.getStage(),
+                    snapshot.getPercent(),
+                    snapshot.getChangedChunks(),
+                    mb
+                );
+                bar.setName(new TextComponentString(TextFormatting.LIGHT_PURPLE + title));
+            });
+        } catch (Exception ignored) {
+        }
     }
 
     private void clearBossBar(ICommandSender sender, BossInfoServer bar) {
         if (bar == null || !(sender instanceof EntityPlayerMP)) {
             return;
         }
-        bar.removePlayer((EntityPlayerMP) sender);
+
+        EntityPlayerMP player = (EntityPlayerMP) sender;
+        try {
+            if (player.connection != null) {
+                bar.removePlayer(player);
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     private void runRestoreInPlace(MinecraftServer server, ICommandSender sender, File repoDir, File worldDir, String targetRef) {
@@ -524,7 +676,7 @@ public class BackupCommand extends CommandBase {
                         int restoredEntities = EntitySnapshotManager.apply(server, repoDir);
                         int restoredBlockEntities = BlockEntitySnapshotManager.apply(server, repoDir);
                         sender.sendMessage(formatMessage(TextFormatting.GREEN, "Restored " + rebuiltRegions + " region files, repositioned " + restoredEntities + " entities, and refreshed " + restoredBlockEntities + " block entities."));
-                        scheduleRestoreKick(server, activeWorld, 5, wasSavingDisabled);
+                        scheduleRestoreKick(server, sender, activeWorld, 5, wasSavingDisabled);
                     } catch (Exception applyException) {
                         sender.sendMessage(formatMessage(TextFormatting.RED, "Restore apply phase failed: " + applyException.getMessage()));
                         activeWorld.disableLevelSaving = wasSavingDisabled;
@@ -539,7 +691,13 @@ public class BackupCommand extends CommandBase {
         });
     }
 
-    private void scheduleRestoreKick(MinecraftServer server, WorldServer restoredWorld, int seconds, boolean previousDisableSavingState) {
+    private void scheduleRestoreKick(MinecraftServer server, ICommandSender sender, WorldServer restoredWorld, int seconds, boolean previousDisableSavingState) {
+        if (server.isSinglePlayer()) {
+            restoredWorld.disableLevelSaving = previousDisableSavingState;
+            sender.sendMessage(formatMessage(TextFormatting.YELLOW, "Restore applied in singleplayer. Re-open the world from menu if chunks look stale."));
+            return;
+        }
+
         List<UUID> playersToKick = new ArrayList<>();
         for (Object player : restoredWorld.playerEntities) {
             if (player instanceof EntityPlayerMP) {
@@ -597,9 +755,13 @@ public class BackupCommand extends CommandBase {
                     if (livePlayer == null || livePlayer.connection == null) {
                         continue;
                     }
-                    String disconnectMessage = TextFormatting.GREEN + "Restoration successful! You can enter your world again.";
-                    livePlayer.connection.disconnect(new TextComponentString(disconnectMessage));
-                    countdownBar.removePlayer(livePlayer);
+                    try {
+                        String disconnectMessage = TextFormatting.GREEN + "Restoration successful! You can enter your world again.";
+                        livePlayer.connection.disconnect(new TextComponentString(disconnectMessage));
+                    } catch (Exception ignored) {
+                    } finally {
+                        countdownBar.removePlayer(livePlayer);
+                    }
                 }
                 restoredWorld.disableLevelSaving = previousDisableSavingState;
             });

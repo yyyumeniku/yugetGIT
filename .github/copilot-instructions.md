@@ -22,6 +22,20 @@ compatibility problems at scale. Native git runs in a separate OS process, never
 blocking the Minecraft thread.
 *(For more info and architecture context on how FastBack does things, check out: https://pcal43.github.io/fastback/ and the library it uses https://github.com/lemire/javaewah)*
 
+## Research Escalation Rule
+If errors persist after local debugging attempts OR the user explicitly asks for external research,
+the agent must consult internet sources before the next code-change iteration.
+
+Required research scope:
+- Official docs (Git, Forge, Java, library docs)
+- GitHub issues/discussions and source references
+- Community troubleshooting (forums, Reddit, Stack Overflow)
+
+After research:
+1. Summarize the relevant findings briefly in chat.
+2. Apply a concrete fix in code.
+3. Re-run validation (build/tests/runtime checks) and report the result.
+
 ---
 
 ## Pre-Launch Swing Dialog (First Run)

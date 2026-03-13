@@ -5,14 +5,32 @@ import net.querz.mca.LoadFlags;
 import net.querz.mca.MCAFile;
 import net.querz.mca.MCAUtil;
 import net.querz.nbt.io.NBTUtil;
+import net.querz.nbt.tag.ListTag;
 import net.querz.nbt.tag.CompoundTag;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Set;
 
 public class ChunkExploder {
+
+    private static final Set<String> COMPARABLE_LEVEL_KEYS = new HashSet<>();
+    private static final Set<String> COMPARABLE_SECTION_KEYS = new HashSet<>();
+
+    static {
+        COMPARABLE_LEVEL_KEYS.add("xPos");
+        COMPARABLE_LEVEL_KEYS.add("zPos");
+        COMPARABLE_LEVEL_KEYS.add("Biomes");
+        COMPARABLE_LEVEL_KEYS.add("Sections");
+
+        COMPARABLE_SECTION_KEYS.add("Y");
+        COMPARABLE_SECTION_KEYS.add("Blocks");
+        COMPARABLE_SECTION_KEYS.add("Data");
+        COMPARABLE_SECTION_KEYS.add("Add");
+    }
 
     public static final class ExplosionResult {
         private final boolean changed;
@@ -106,9 +124,25 @@ public class ChunkExploder {
                 // If any chunk in this region changed, keep this region fully reconstructible at this commit.
                 if (isChangedChunk || baselineMissing) {
                     CompoundTag chunkData = chunk.getHandle();
-                    NBTUtil.write(chunkData, chunkOutPath.toFile(), true);
-                    writtenBytes += Files.size(chunkOutPath);
-                    writtenChunks++;
+                    boolean shouldWrite = baselineMissing;
+                    if (!shouldWrite) {
+                        try {
+                            Object existingTag = NBTUtil.read(chunkOutPath.toFile(), true).getTag();
+                            if (existingTag instanceof CompoundTag) {
+                                shouldWrite = !chunksEquivalent(chunkData, (CompoundTag) existingTag);
+                            } else {
+                                shouldWrite = true;
+                            }
+                        } catch (Exception ignored) {
+                            shouldWrite = true;
+                        }
+                    }
+
+                    if (shouldWrite) {
+                        NBTUtil.write(chunkData, chunkOutPath.toFile(), true);
+                        writtenBytes += Files.size(chunkOutPath);
+                        writtenChunks++;
+                    }
                 }
 
                 if (currentRegionTimestamps[i] > 0) {
@@ -120,5 +154,106 @@ public class ChunkExploder {
         }
 
         return new ExplosionResult(writtenChunks > 0, writtenChunks, writtenBytes);
+    }
+
+    private static boolean chunksEquivalent(CompoundTag current, CompoundTag existing) {
+        Object currentLevelObj = current.get("Level");
+        Object existingLevelObj = existing.get("Level");
+        if (!(currentLevelObj instanceof CompoundTag) || !(existingLevelObj instanceof CompoundTag)) {
+            return current.equals(existing);
+        }
+
+        CompoundTag currentLevel = (CompoundTag) currentLevelObj;
+        CompoundTag existingLevel = (CompoundTag) existingLevelObj;
+
+        Set<String> allKeys = new HashSet<>();
+        allKeys.addAll(currentLevel.keySet());
+        allKeys.addAll(existingLevel.keySet());
+
+        for (String key : allKeys) {
+            if (isVolatileLevelKey(key)) {
+                continue;
+            }
+            if (!isComparableLevelKey(key)) {
+                continue;
+            }
+            Object left = currentLevel.get(key);
+            Object right = existingLevel.get(key);
+            if (left == null && right == null) {
+                continue;
+            }
+            if (left == null || right == null) {
+                return false;
+            }
+            if ("Sections".equals(key)) {
+                if (!sectionListsEquivalent(left, right)) {
+                    return false;
+                }
+                continue;
+            }
+            if (!left.equals(right)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static boolean sectionListsEquivalent(Object leftSections, Object rightSections) {
+        if (!(leftSections instanceof ListTag) || !(rightSections instanceof ListTag)) {
+            return leftSections.equals(rightSections);
+        }
+
+        ListTag<?> leftList = (ListTag<?>) leftSections;
+        ListTag<?> rightList = (ListTag<?>) rightSections;
+        if (leftList.size() != rightList.size()) {
+            return false;
+        }
+
+        for (int i = 0; i < leftList.size(); i++) {
+            Object leftSectionObj = leftList.get(i);
+            Object rightSectionObj = rightList.get(i);
+            if (!(leftSectionObj instanceof CompoundTag) || !(rightSectionObj instanceof CompoundTag)) {
+                if (leftSectionObj == null && rightSectionObj == null) {
+                    continue;
+                }
+                if (leftSectionObj == null || rightSectionObj == null || !leftSectionObj.equals(rightSectionObj)) {
+                    return false;
+                }
+                continue;
+            }
+
+            CompoundTag leftSection = (CompoundTag) leftSectionObj;
+            CompoundTag rightSection = (CompoundTag) rightSectionObj;
+            for (String sectionKey : COMPARABLE_SECTION_KEYS) {
+
+                Object sectionLeftValue = leftSection.get(sectionKey);
+                Object sectionRightValue = rightSection.get(sectionKey);
+                if (sectionLeftValue == null && sectionRightValue == null) {
+                    continue;
+                }
+                if (sectionLeftValue == null || sectionRightValue == null) {
+                    return false;
+                }
+                if (!sectionLeftValue.equals(sectionRightValue)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static boolean isComparableLevelKey(String key) {
+        return COMPARABLE_LEVEL_KEYS.contains(key);
+    }
+
+    private static boolean isVolatileLevelKey(String key) {
+        return "LastUpdate".equals(key)
+            || "InhabitedTime".equals(key)
+            || "Entities".equals(key)
+            || "TileEntities".equals(key)
+            || "TileTicks".equals(key)
+            || "LiquidTicks".equals(key);
     }
 }

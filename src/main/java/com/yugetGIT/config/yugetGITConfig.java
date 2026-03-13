@@ -19,6 +19,9 @@ public class yugetGITConfig {
         @Config.Comment("Minutes between automatic commits; 0 disables interval commits")
         @Config.RangeInt(min = 0, max = 1440)
         public int commitIntervalMinutes = 0;
+
+        @Config.Comment("When true, /backup save skips if player movement since last manual backup is minimal. Use /backup fsave to force.")
+        public boolean manualSaveMovementGuardEnabled = true;
     }
 
     @SubscribeEvent

@@ -9,12 +9,21 @@ Universal flags:
 - `-start`
 - `-hash <id>`
 - `-m "message"`
+- `-force` (for `/backup save` only)
 
 ## Commands
 - `/backup help`
   - Shows command usage.
-- `/backup save -m "message"`
+- `/backup save [-force] -m "message"`
   - Flushes world/chunks and entities, freezes save, stages data, commits backup.
+  - Without `-force`, repeated manual saves can be skipped when movement guard is enabled and movement since last manual backup is minimal.
+- `/backup fsave -m "message"`
+  - Shortcut for a forced manual save (`/backup save -force ...`).
+
+## Config Toggle
+- `backup.manualSaveMovementGuardEnabled` (default: `true`)
+  - `true`: `/backup save` may skip with a "No changes detected" message when movement is minimal.
+  - `false`: `/backup save` always proceeds to content-based chunk staging and commit checks.
 - `/backup list [-all] [-start] [-(number)]`
   - Lists backup history with chronological numbered entries (`#1` is your first commit in that world repo).
   - Use those numbers directly with restore (`/backup restore -4`).

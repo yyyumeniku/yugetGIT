@@ -3,11 +3,14 @@ package com.yugetGIT;
 import com.yugetGIT.yugetgit.Tags;
 import com.yugetGIT.commands.BackupCommand;
 import com.yugetGIT.events.WorldSaveHandler;
+import com.yugetGIT.ui.SaveProgressOverlay;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.event.FMLServerStartingEvent;
+import net.minecraftforge.fml.common.event.FMLServerStoppingEvent;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 import net.minecraftforge.fml.common.event.FMLInitializationEvent;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.fml.common.FMLCommonHandler;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -15,6 +18,7 @@ import org.apache.logging.log4j.Logger;
 public class YugetGITMod {
 
     public static final Logger LOGGER = LogManager.getLogger(Tags.MOD_NAME);
+    private final WorldSaveHandler worldSaveHandler = new WorldSaveHandler();
 
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
@@ -23,11 +27,19 @@ public class YugetGITMod {
     
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
-        MinecraftForge.EVENT_BUS.register(new WorldSaveHandler());
+        MinecraftForge.EVENT_BUS.register(worldSaveHandler);
+        if (FMLCommonHandler.instance().getSide().isClient()) {
+            MinecraftForge.EVENT_BUS.register(new SaveProgressOverlay());
+        }
     }
 
     @Mod.EventHandler
     public void serverStarting(FMLServerStartingEvent event) {
         event.registerServerCommand(new BackupCommand());
+    }
+
+    @Mod.EventHandler
+    public void serverStopping(FMLServerStoppingEvent event) {
+        worldSaveHandler.handleServerStopping(FMLCommonHandler.instance().getMinecraftServerInstance());
     }
 }
