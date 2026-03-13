@@ -15,6 +15,7 @@ import net.minecraft.world.WorldServer;
 import com.yugetGIT.core.git.GitCredentialChecker;
 import com.yugetGIT.core.git.CommitBuilder;
 import com.yugetGIT.core.git.GitExecutor;
+import com.yugetGIT.core.git.GitLfsManager;
 import com.yugetGIT.core.git.RepoConfig;
 import org.apache.commons.io.FileUtils;
 
@@ -317,6 +318,9 @@ public class BackupCommand extends CommandBase {
         
         File gitDir = new File(repoDir, ".git");
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "Repository Built: " + (gitDir.exists() ? TextFormatting.GREEN + "Yes" : TextFormatting.RED + "No")));
+        if (gitDir.exists()) {
+            sender.sendMessage(formatMessage(TextFormatting.WHITE, "LFS Tracking Rules: " + (GitLfsManager.hasRequiredTrackingRules(repoDir) ? TextFormatting.GREEN + "Ready" : TextFormatting.YELLOW + "Missing (.gitattributes not fully configured)")));
+        }
     }
 
     private void runManualSave(MinecraftServer server, ICommandSender sender, File repoDir, File worldDir, String message) {
@@ -334,6 +338,13 @@ public class BackupCommand extends CommandBase {
                 e.printStackTrace();
                 return;
             }
+        }
+
+        try {
+            RepoConfig.ensureOperationalConfig(repoDir);
+        } catch (Exception e) {
+            sender.sendMessage(formatMessage(TextFormatting.RED, "Git-LFS setup failed: " + e.getMessage()));
+            return;
         }
 
         World senderWorld = sender.getEntityWorld();

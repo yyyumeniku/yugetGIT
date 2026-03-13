@@ -28,5 +28,10 @@ public class RepoConfig {
         GitExecutor.execute(repoDir, 5, "config", "index.version", "4");
 
         GitExecutor.execute(repoDir, 5, "update-index", "--index-version", "4");
+        ensureOperationalConfig(repoDir);
+    }
+
+    public static void ensureOperationalConfig(File repoDir) throws Exception {
+        GitLfsManager.ensureConfigured(repoDir);
     }
 }

@@ -92,7 +92,7 @@ public class CommitBuilder {
                     progress.accept(new ProgressSnapshot("Indexing", 90, stageResult.getChangedChunks(), stageResult.getBytesWritten()));
                 }
 
-                GitExecutor.GitResult addResult = GitExecutor.execute(repoDir, 180, "add", "-A", "staging", "meta");
+                GitExecutor.GitResult addResult = GitExecutor.execute(repoDir, 180, "add", "-A", "staging", "meta", ".gitattributes");
                 if (!addResult.isSuccess()) {
                     if (progress != null) {
                         progress.accept(new ProgressSnapshot("Failed", 100, stageResult.getChangedChunks(), stageResult.getBytesWritten()));

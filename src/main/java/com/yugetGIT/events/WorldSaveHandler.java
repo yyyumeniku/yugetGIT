@@ -74,6 +74,13 @@ public class WorldSaveHandler {
             }
         }
 
+        try {
+            RepoConfig.ensureOperationalConfig(repoDir);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return;
+        }
+
         server.getPlayerList().saveAllPlayerData();
 
         final boolean wasSavingDisabled = world.disableLevelSaving;
