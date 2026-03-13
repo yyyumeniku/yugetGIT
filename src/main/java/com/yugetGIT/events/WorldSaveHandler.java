@@ -3,6 +3,7 @@ package com.yugetGIT.events;
 import com.yugetGIT.config.StateProperties;
 import com.yugetGIT.config.yugetGITConfig;
 import com.yugetGIT.core.git.CommitBuilder;
+import com.yugetGIT.core.git.GitExecutor;
 import com.yugetGIT.core.git.RepoConfig;
 import com.yugetGIT.util.PlatformPaths;
 import net.minecraft.world.WorldServer;
@@ -37,6 +38,12 @@ public class WorldSaveHandler {
             MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
             if (server != null && server.getEntityWorld() != null) {
                 WorldServer world = (WorldServer) server.getEntityWorld();
+                File worldDir = world.getSaveHandler().getWorldDirectory();
+                String worldKey = worldDir.getName();
+                File repoDir = PlatformPaths.getWorldsDir().resolve(worldKey).toFile();
+                if (!hasInitialBackupCommit(repoDir)) {
+                    return;
+                }
                 runCommitForWorld(server, world, "Auto-commit (Interval " + intervalMinutes + "m)");
             }
         }
@@ -46,11 +53,29 @@ public class WorldSaveHandler {
     public void onWorldSave(WorldEvent.Save event) {
         if (!StateProperties.isBackupsEnabled() || event.getWorld().isRemote) return;
         if (!yugetGITConfig.backup.autoCommitOnSave) return;
+        if (!(event.getWorld() instanceof WorldServer)) return;
+
+        WorldServer world = (WorldServer) event.getWorld();
+        File worldDir = world.getSaveHandler().getWorldDirectory();
+        String worldKey = worldDir.getName();
+        File repoDir = PlatformPaths.getWorldsDir().resolve(worldKey).toFile();
+        if (!hasInitialBackupCommit(repoDir)) return;
         
-        if (event.getWorld() instanceof WorldServer) {
-            WorldServer world = (WorldServer) event.getWorld();
-            MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
-            runCommitForWorld(server, world, "Auto-commit on save");
+        MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
+        runCommitForWorld(server, world, "Auto-commit on save");
+    }
+
+    private boolean hasInitialBackupCommit(File repoDir) {
+        File gitDir = new File(repoDir, ".git");
+        if (!gitDir.exists()) {
+            return false;
+        }
+
+        try {
+            GitExecutor.GitResult result = GitExecutor.execute(repoDir, 10, "rev-parse", "--verify", "HEAD");
+            return result.isSuccess();
+        } catch (Exception ignored) {
+            return false;
         }
     }
 

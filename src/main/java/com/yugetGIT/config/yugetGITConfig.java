@@ -10,32 +10,15 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 @Mod.EventBusSubscriber(modid = "yugetgit")
 public class yugetGITConfig {
 
-    public static RepoSettings repo = new RepoSettings();
     public static BackupSettings backup = new BackupSettings();
-    public static PushPullSettings sync = new PushPullSettings();
-
-    public static class RepoSettings {
-        public String repoMode = "PER_WORLD"; // SINGLE_REPO
-    }
 
     public static class BackupSettings {
-        public boolean autoCommitOnSave = false; // default false so pause doesn't trigger it
-        public boolean commitOnPlayerDeath = false;
-        public int commitIntervalMinutes = 0;
-        public String[] ignoreList = new String[]{};
-    }
+        @Config.Comment("Enable auto-commit on world save after the first manual /backup save exists")
+        public boolean autoCommitOnSave = false;
 
-    public static class PushPullSettings {
-        public boolean pullOnLaunch = true;
-        public int pullTimeoutSeconds = 300;
-        public String pullRemote = "origin";
-        public String pullBranch = "main";
-        
-        public boolean pushOnExit = false;
-        public int pushAfterCommits = 0;
-        public int pushTimeoutSeconds = 300;
-        public String pushRemote = "origin";
-        public String pushBranch = "main";
+        @Config.Comment("Minutes between automatic commits; 0 disables interval commits")
+        @Config.RangeInt(min = 0, max = 1440)
+        public int commitIntervalMinutes = 0;
     }
 
     @SubscribeEvent
