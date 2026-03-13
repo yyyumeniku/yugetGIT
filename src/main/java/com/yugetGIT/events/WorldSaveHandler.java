@@ -15,6 +15,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.fml.common.FMLCommonHandler;
 import java.util.function.Consumer;
 import net.minecraft.util.text.TextComponentString;
+import com.yugetGIT.util.EntitySnapshotManager;
 
 public class WorldSaveHandler {
 
@@ -87,6 +88,7 @@ public class WorldSaveHandler {
         try {
             world.saveAllChunks(true, null);
             world.disableLevelSaving = true;
+            EntitySnapshotManager.capture(server, repoDir);
         } catch (Exception e) {
             world.disableLevelSaving = wasSavingDisabled;
             e.printStackTrace();

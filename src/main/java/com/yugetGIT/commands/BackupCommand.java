@@ -17,6 +17,7 @@ import com.yugetGIT.core.git.CommitBuilder;
 import com.yugetGIT.core.git.GitExecutor;
 import com.yugetGIT.core.git.GitLfsManager;
 import com.yugetGIT.core.git.RepoConfig;
+import com.yugetGIT.util.EntitySnapshotManager;
 import org.apache.commons.io.FileUtils;
 
 import java.io.File;
@@ -306,13 +307,12 @@ public class BackupCommand extends CommandBase {
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup worlds"));
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup worlds delete \"World Folder\""));
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup status"));
+        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup debug-dialog"));
     }
 
     private void sendStatus(ICommandSender sender, File repoDir) {
-        sender.sendMessage(formatMessage(TextFormatting.AQUA, "--- yugetGIT Status ---"));
         boolean userConfigured = GitCredentialChecker.hasUserName() && GitCredentialChecker.hasUserEmail();
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "Identity Configured: " + (userConfigured ? TextFormatting.GREEN + "Yes" : TextFormatting.RED + "No")));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "Credential Helper: " + (GitCredentialChecker.hasCredentialHelper() ? TextFormatting.GREEN + "Configured" : TextFormatting.RED + "Missing")));
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "Git Resolved: " + (com.yugetGIT.core.git.GitBootstrap.isGitResolved() ? TextFormatting.GREEN + "Yes" : TextFormatting.RED + "No")));
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "Git-LFS Available: " + (com.yugetGIT.config.StateProperties.isGitLfsAvailable() ? TextFormatting.GREEN + "Yes" : TextFormatting.RED + "No")));
         
@@ -358,9 +358,10 @@ public class BackupCommand extends CommandBase {
         try {
             activeWorld.saveAllChunks(true, null);
             activeWorld.disableLevelSaving = true;
+            EntitySnapshotManager.capture(server, repoDir);
         } catch (Exception e) {
             activeWorld.disableLevelSaving = wasSavingDisabled;
-            sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to flush world chunks before commit."));
+            sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to flush world/entity state before commit."));
             return;
         }
 
@@ -471,8 +472,10 @@ public class BackupCommand extends CommandBase {
                 }
 
                 int rebuiltRegions = assembleRegionsFromStaging(repoDir, worldDir);
+                int restoredEntities = EntitySnapshotManager.apply(server, repoDir);
                 com.yugetGIT.core.mca.ChunkTimestamp.clearAll();
                 server.addScheduledTask(() -> {
+                    sender.sendMessage(formatMessage(TextFormatting.GREEN, "Restored " + rebuiltRegions + " region files and repositioned " + restoredEntities + " entities."));
                     scheduleRestoreKick(server, activeWorld, 5, wasSavingDisabled);
                 });
             } catch (Exception e) {

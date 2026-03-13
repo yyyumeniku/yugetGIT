@@ -15,12 +15,6 @@ public class PushOperation {
 
     public static void pushAsync(File repoDir, String remote, String branch, Consumer<String> onProgress, Consumer<Boolean> onComplete) {
         BackgroundExecutor.execute(() -> {
-            if (!GitCredentialChecker.hasCredentialHelper()) {
-                onProgress.accept("Push failed. Not configured — see /backup status");
-                onComplete.accept(false);
-                return;
-            }
-
             try {
                 List<String> cmdArgs = new ArrayList<>();
                 String gitExe = GitBootstrap.isGitResolved() ? com.yugetGIT.config.StateProperties.getGitPath() : "git";

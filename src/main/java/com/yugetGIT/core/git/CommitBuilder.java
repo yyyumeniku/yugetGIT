@@ -64,7 +64,7 @@ public class CommitBuilder {
 
     public void commitAsync(Consumer<String> feedback, Consumer<ProgressSnapshot> progress, Runnable completion) {
         if (!COMMIT_IN_PROGRESS.compareAndSet(false, true)) {
-            feedback.accept("[yugetGIT] Save skipped: another backup is already running.");
+            feedback.accept("Save skipped: another backup is already running.");
             completion.run();
             return;
         }
@@ -72,7 +72,7 @@ public class CommitBuilder {
         BackgroundExecutor.execute(() -> {
             try {
                 WorldSnapshotStager stager = new WorldSnapshotStager();
-                feedback.accept("[yugetGIT] Scanning region changes...");
+                feedback.accept("Scanning region changes...");
                 WorldSnapshotStager.StageResult stageResult = stager.stageWorld(worldDir, repoDir, update -> {
                     if (progress != null) {
                         progress.accept(new ProgressSnapshot("Staging", update.getPercent(), update.getChangedChunks(), update.getBytesWritten()));
@@ -83,11 +83,11 @@ public class CommitBuilder {
                     if (progress != null) {
                         progress.accept(new ProgressSnapshot("Idle", 100, 0, 0));
                     }
-                    feedback.accept("[yugetGIT] No changed chunks found.");
+                    feedback.accept("No changed chunks found.");
                     return;
                 }
 
-                feedback.accept("[yugetGIT] Staged " + stageResult.getChangedChunks() + " chunks from " + stageResult.getChangedRegions() + " regions.");
+                feedback.accept("Staged " + stageResult.getChangedChunks() + " chunks from " + stageResult.getChangedRegions() + " regions.");
                 if (progress != null) {
                     progress.accept(new ProgressSnapshot("Indexing", 90, stageResult.getChangedChunks(), stageResult.getBytesWritten()));
                 }
@@ -97,15 +97,15 @@ public class CommitBuilder {
                     if (progress != null) {
                         progress.accept(new ProgressSnapshot("Failed", 100, stageResult.getChangedChunks(), stageResult.getBytesWritten()));
                     }
-                    feedback.accept("[yugetGIT] Git add failed: " + addResult.stderr);
+                    feedback.accept("Git add failed: " + addResult.stderr);
                     return;
                 }
 
-                feedback.accept("[yugetGIT] Committing snapshot...");
+                feedback.accept("Committing snapshot...");
                 GitExecutor.GitResult commitResult = GitExecutor.execute(repoDir, 120, "commit", "-m", message);
                 
                 if (commitResult.isSuccess()) {
-                    feedback.accept("[yugetGIT] Backup committed: " + message);
+                    feedback.accept("Backup committed: " + message);
                     if (progress != null) {
                         progress.accept(new ProgressSnapshot("Committed", 100, stageResult.getChangedChunks(), stageResult.getBytesWritten()));
                     }
@@ -115,16 +115,16 @@ public class CommitBuilder {
                     if (progress != null) {
                         progress.accept(new ProgressSnapshot("Idle", 100, stageResult.getChangedChunks(), stageResult.getBytesWritten()));
                     }
-                    feedback.accept("[yugetGIT] No new changes since last backup.");
+                    feedback.accept("No new changes since last backup.");
                 } else {
                     if (progress != null) {
                         progress.accept(new ProgressSnapshot("Failed", 100, stageResult.getChangedChunks(), stageResult.getBytesWritten()));
                     }
-                    feedback.accept("[yugetGIT] Commit failed: " + commitResult.stderr);
+                    feedback.accept("Commit failed: " + commitResult.stderr);
                 }
 
             } catch (Exception e) {
-                feedback.accept("[yugetGIT] Commit error: " + e.getMessage());
+                feedback.accept("Commit error: " + e.getMessage());
                 e.printStackTrace();
             } finally {
                 COMMIT_IN_PROGRESS.set(false);

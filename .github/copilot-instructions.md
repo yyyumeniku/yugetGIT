@@ -609,3 +609,5 @@ Use a unified `ParsedArgs` internal parser loop inside `execute` before routing 
 
 ## Documentation Requirement
 ALWAYS create or update documentation mapping when writing complex systems like restoring branches, manipulating chunks, or introducing new commands. This keeps project context clean.
+ALL user-facing command docs and "how to use the mod" docs MUST live under `docs/` as separated, focused markdown files (for example `docs/backup-commands.md`, `docs/getting-started.md`, `docs/debug-dialog.md`).
+Do not put new command/how-to guides at repository root.

@@ -13,10 +13,6 @@ import java.util.function.Consumer;
 public class GitPullOperation {
 
     public static boolean pull(File repoDir, String remote, String branch, int timeoutSeconds, Consumer<String> onStep) {
-        if (!GitCredentialChecker.hasCredentialHelper()) {
-            return false;
-        }
-
         try {
             List<String> cmdArgs = new ArrayList<>();
             String gitExe = GitBootstrap.isGitResolved() ? com.yugetGIT.config.StateProperties.getGitPath() : "git";

@@ -10,10 +10,6 @@ public class GitCredentialChecker {
         return checkConfig("user.email");
     }
 
-    public static boolean hasCredentialHelper() {
-        return checkConfig("credential.helper");
-    }
-
     private static boolean checkConfig(String key) {
         try {
             GitExecutor.GitResult result = GitExecutor.execute(null, 5, "config", "--global", key);
@@ -30,15 +26,6 @@ public class GitCredentialChecker {
             return result.isSuccess();
         } catch (Exception e) {
             return false;
-        }
-    }
-
-    public static String getHelperSuggestion(com.yugetGIT.util.OsDetector.OS os) {
-        switch (os) {
-            case WINDOWS: return "Git Credential Manager is included with Git for Windows.";
-            case MACOS: return "Run: git config --global credential.helper osxkeychain";
-            case LINUX: return "Run: git config --global credential.helper store";
-            default: return "Run git config --global credential.helper store";
         }
     }
 }
