@@ -17,6 +17,7 @@ import com.yugetGIT.core.git.CommitBuilder;
 import com.yugetGIT.core.git.GitExecutor;
 import com.yugetGIT.core.git.GitLfsManager;
 import com.yugetGIT.core.git.RepoConfig;
+import com.yugetGIT.util.BlockEntitySnapshotManager;
 import com.yugetGIT.util.EntitySnapshotManager;
 import org.apache.commons.io.FileUtils;
 
@@ -24,7 +25,10 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.function.Consumer;
@@ -61,6 +65,8 @@ public class BackupCommand extends CommandBase {
         boolean start = false;
         String hash = null;
         String userString = null;
+        List<Integer> extraCounts = new ArrayList<>();
+        List<String> looseTokens = new ArrayList<>();
         boolean valid = true;
         String error = "";
         
@@ -114,6 +120,13 @@ public class BackupCommand extends CommandBase {
                     p.valid = false;
                     p.error = "Unexpected argument: " + args[i];
                     break;
+                } else {
+                    try {
+                        int parsedNumber = Integer.parseInt(args[i]);
+                        p.extraCounts.add(parsedNumber);
+                    } catch (Exception ignored) {
+                        p.looseTokens.add(args[i]);
+                    }
                 }
             }
             if (p.all) p.count = Integer.MAX_VALUE;
@@ -133,7 +146,7 @@ public class BackupCommand extends CommandBase {
         File repoDir = com.yugetGIT.util.PlatformPaths.getWorldsDir().resolve(worldKey).toFile();
         
         String sub = args[0].toLowerCase();
-        ParsedArgs parsed = ParsedArgs.parse(args, !"worlds".equals(sub));
+        ParsedArgs parsed = ParsedArgs.parse(args, !("worlds".equals(sub) || "delete".equals(sub)));
         if (!parsed.valid) {
             sender.sendMessage(formatMessage(TextFormatting.RED, parsed.error));
             return;
@@ -156,26 +169,32 @@ public class BackupCommand extends CommandBase {
                 if (!hasRepository(sender, repoDir)) {
                     return;
                 }
-                sender.sendMessage(formatMessage(TextFormatting.GREEN, "Recent backups:"));
+                sender.sendMessage(formatMessage(TextFormatting.GREEN, "Backups:"));
                 try {
                     GitExecutor.GitResult result = GitExecutor.execute(repoDir, 10, "log", "--oneline");
                     if (result.isSuccess() && !result.stdout.trim().isEmpty()) {
                         List<String> lines = new ArrayList<>(Arrays.asList(result.stdout.trim().split("\n")));
-                        if (parsed.start) Collections.reverse(lines);
-                        
+                        Collections.reverse(lines); // oldest -> newest
+
+                        int total = lines.size();
                         int limit = parsed.count == -1 ? 10 : parsed.count;
-                        int end = Math.min(limit, lines.size());
-                        sender.sendMessage(formatMessage(TextFormatting.WHITE, "Showing " + end + " / " + lines.size() + " commits:"));
-                        for (int i = 0; i < end; i++) {
-                            String logLine = lines.get(i).trim();
+                        int showCount = Math.min(limit, total);
+                        sender.sendMessage(formatMessage(TextFormatting.WHITE, "Showing " + showCount + " / " + total + " commits."));
+
+                        for (int displayIndex = 0; displayIndex < showCount; displayIndex++) {
+                            int restoreNumber = displayIndex + 1;
+                            String logLine = lines.get(displayIndex).trim();
                             if (!logLine.isEmpty()) {
                                 String[] parts = logLine.split(" ", 2);
                                 if (parts.length == 2) {
                                     String hash = parts[0];
                                     String msg = parts[1];
-                                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "- " + TextFormatting.YELLOW + hash + TextFormatting.GRAY + " " + msg));
+                                    sender.sendMessage(new TextComponentString(
+                                        TextFormatting.GRAY + "#" + restoreNumber + " " +
+                                        TextFormatting.YELLOW + hash + TextFormatting.GRAY + " " + msg
+                                    ));
                                 } else {
-                                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "- " + logLine));
+                                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "#" + restoreNumber + " " + logLine));
                                 }
                             }
                         }
@@ -240,13 +259,29 @@ public class BackupCommand extends CommandBase {
                         // Deleting early commits basically means truncating history.
                         sender.sendMessage(formatMessage(TextFormatting.RED, "Git cannot natively 'delete start' without wiping early history securely. Use delete -all to clear completely."));
                     } else {
-                        // Normal "-amount" deletion
-                        int toDelete = parsed.count == -1 ? 1 : parsed.count;
-                        GitExecutor.GitResult res = GitExecutor.execute(repoDir, 60, "reset", "--hard", "HEAD~" + toDelete);
-                        if (res.isSuccess()) {
-                            sender.sendMessage(formatMessage(TextFormatting.AQUA, "Safely rolled back & deleted the latest " + toDelete + " backups."));
+                        List<Integer> requestedDeletes = new ArrayList<>();
+                        if (parsed.count != -1 && parsed.count != Integer.MAX_VALUE) {
+                            requestedDeletes.add(parsed.count);
+                        }
+                        for (Integer extra : parsed.extraCounts) {
+                            if (extra != null && extra > 0) {
+                                requestedDeletes.add(extra);
+                            }
+                        }
+
+                        if (requestedDeletes.size() > 1) {
+                            if (deleteMultipleCommitNumbers(repoDir, requestedDeletes, sender)) {
+                                sender.sendMessage(formatMessage(TextFormatting.AQUA, "Deleted selected commit numbers: " + requestedDeletes.stream().map(String::valueOf).collect(Collectors.joining(", "))));
+                            }
                         } else {
-                            sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to rollback: " + res.stderr));
+                            // Normal "-amount" deletion
+                            int toDelete = parsed.count == -1 ? 1 : parsed.count;
+                            GitExecutor.GitResult res = GitExecutor.execute(repoDir, 60, "reset", "--hard", "HEAD~" + toDelete);
+                            if (res.isSuccess()) {
+                                sender.sendMessage(formatMessage(TextFormatting.AQUA, "Safely rolled back & deleted the latest " + toDelete + " backups."));
+                            } else {
+                                sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to rollback: " + res.stderr));
+                            }
                         }
                     }
                     
@@ -267,11 +302,21 @@ public class BackupCommand extends CommandBase {
                     return;
                 }
                 if (parsed.hash == null && parsed.count <= 0) {
-                    sender.sendMessage(formatMessage(TextFormatting.RED, "Specify a backup hash (-hash id) or recent offset (-1)."));
+                    sender.sendMessage(formatMessage(TextFormatting.RED, "Specify a backup hash (-hash id) or backup number (-1 = first listed commit)."));
                     return;
                 }
 
-                String targetRef = parsed.hash != null ? parsed.hash.replaceAll("[<>]", "") : ("HEAD~" + (parsed.count == -1 ? 1 : parsed.count));
+                String targetRef;
+                if (parsed.hash != null) {
+                    targetRef = parsed.hash.replaceAll("[<>]", "");
+                } else {
+                    int requestedNumber = parsed.count;
+                    targetRef = buildRestoreRefFromNumber(repoDir, requestedNumber);
+                    if (targetRef == null) {
+                        sender.sendMessage(formatMessage(TextFormatting.RED, "Backup number out of range. Run /backup list first."));
+                        return;
+                    }
+                }
                 runRestoreInPlace(server, sender, repoDir, worldDir, targetRef);
                 break;
             case "push":
@@ -359,6 +404,7 @@ public class BackupCommand extends CommandBase {
             activeWorld.saveAllChunks(true, null);
             activeWorld.disableLevelSaving = true;
             EntitySnapshotManager.capture(server, repoDir);
+            BlockEntitySnapshotManager.capture(server, repoDir);
         } catch (Exception e) {
             activeWorld.disableLevelSaving = wasSavingDisabled;
             sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to flush world/entity state before commit."));
@@ -472,11 +518,17 @@ public class BackupCommand extends CommandBase {
                 }
 
                 int rebuiltRegions = assembleRegionsFromStaging(repoDir, worldDir);
-                int restoredEntities = EntitySnapshotManager.apply(server, repoDir);
                 com.yugetGIT.core.mca.ChunkTimestamp.clearAll();
                 server.addScheduledTask(() -> {
-                    sender.sendMessage(formatMessage(TextFormatting.GREEN, "Restored " + rebuiltRegions + " region files and repositioned " + restoredEntities + " entities."));
-                    scheduleRestoreKick(server, activeWorld, 5, wasSavingDisabled);
+                    try {
+                        int restoredEntities = EntitySnapshotManager.apply(server, repoDir);
+                        int restoredBlockEntities = BlockEntitySnapshotManager.apply(server, repoDir);
+                        sender.sendMessage(formatMessage(TextFormatting.GREEN, "Restored " + rebuiltRegions + " region files, repositioned " + restoredEntities + " entities, and refreshed " + restoredBlockEntities + " block entities."));
+                        scheduleRestoreKick(server, activeWorld, 5, wasSavingDisabled);
+                    } catch (Exception applyException) {
+                        sender.sendMessage(formatMessage(TextFormatting.RED, "Restore apply phase failed: " + applyException.getMessage()));
+                        activeWorld.disableLevelSaving = wasSavingDisabled;
+                    }
                 });
             } catch (Exception e) {
                 server.addScheduledTask(() -> {
@@ -571,6 +623,146 @@ public class BackupCommand extends CommandBase {
         return null;
     }
 
+    private String buildRestoreRefFromNumber(File repoDir, int number) {
+        if (number <= 0) {
+            return null;
+        }
+
+        try {
+            GitExecutor.GitResult countResult = GitExecutor.execute(repoDir, 10, "rev-list", "--count", "HEAD");
+            if (!countResult.isSuccess()) {
+                return null;
+            }
+
+            int totalCommits = Integer.parseInt(countResult.stdout.trim());
+            if (number > totalCommits) {
+                return null;
+            }
+
+            int headOffset = totalCommits - number;
+            if (headOffset == 0) {
+                return "HEAD";
+            }
+            return "HEAD~" + headOffset;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private boolean deleteMultipleCommitNumbers(File repoDir, List<Integer> requestedNumbers, ICommandSender sender) {
+        try {
+            Set<Integer> uniqueNumbers = new HashSet<>();
+            for (Integer number : requestedNumbers) {
+                if (number != null && number > 0) {
+                    uniqueNumbers.add(number);
+                }
+            }
+
+            if (uniqueNumbers.isEmpty()) {
+                sender.sendMessage(formatMessage(TextFormatting.RED, "No valid commit numbers were provided for delete."));
+                return false;
+            }
+
+            GitExecutor.GitResult historyResult = GitExecutor.execute(repoDir, 20, "rev-list", "--reverse", "HEAD");
+            if (!historyResult.isSuccess() || historyResult.stdout.trim().isEmpty()) {
+                sender.sendMessage(formatMessage(TextFormatting.RED, "Unable to read commit history for multi-delete."));
+                return false;
+            }
+
+            List<String> commits = Arrays.stream(historyResult.stdout.trim().split("\\n"))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+
+            int totalCommits = commits.size();
+            for (Integer number : uniqueNumbers) {
+                if (number <= 0 || number > totalCommits) {
+                    sender.sendMessage(formatMessage(TextFormatting.RED, "Commit number out of range: " + number));
+                    return false;
+                }
+            }
+
+            List<Integer> keepNumbers = new ArrayList<>();
+            for (int i = 1; i <= totalCommits; i++) {
+                if (!uniqueNumbers.contains(i)) {
+                    keepNumbers.add(i);
+                }
+            }
+
+            if (keepNumbers.isEmpty()) {
+                FileUtils.deleteDirectory(new File(repoDir, ".git"));
+                RepoConfig.initAndConfigure(repoDir);
+                return true;
+            }
+
+            String branchName = "master";
+            GitExecutor.GitResult branchResult = GitExecutor.execute(repoDir, 10, "rev-parse", "--abbrev-ref", "HEAD");
+            if (branchResult.isSuccess()) {
+                String branch = branchResult.stdout.trim();
+                if (!branch.isEmpty() && !"HEAD".equals(branch)) {
+                    branchName = branch;
+                }
+            }
+
+            try {
+                GitExecutor.execute(repoDir, 10, "rebase", "--abort");
+            } catch (Exception ignored) {
+            }
+
+            GitExecutor.execute(repoDir, 20, "reset", "--hard", "HEAD");
+            GitExecutor.execute(repoDir, 20, "clean", "-fd");
+
+            String tempBranch = "yuget-rewrite-" + System.currentTimeMillis();
+            GitExecutor.GitResult orphanResult = GitExecutor.execute(repoDir, 20, "checkout", "--orphan", tempBranch);
+            if (!orphanResult.isSuccess()) {
+                sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to start temporary rewrite branch."));
+                return false;
+            }
+
+            try {
+                GitExecutor.execute(repoDir, 10, "rm", "-rf", "--cached", ".");
+            } catch (Exception ignored) {
+            }
+            GitExecutor.execute(repoDir, 20, "clean", "-fd");
+
+            for (Integer keepNumber : keepNumbers) {
+                String keepHash = commits.get(keepNumber - 1);
+
+                GitExecutor.GitResult checkoutSnapshot = GitExecutor.execute(repoDir, 30, "checkout", keepHash, "--", "staging", "meta", ".gitattributes");
+                if (!checkoutSnapshot.isSuccess()) {
+                    sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to materialize commit snapshot #" + keepNumber + " during rewrite."));
+                    return false;
+                }
+
+                GitExecutor.GitResult msgResult = GitExecutor.execute(repoDir, 10, "log", "-1", "--format=%s", keepHash);
+                String message = (msgResult.isSuccess() && !msgResult.stdout.trim().isEmpty()) ? msgResult.stdout.trim() : ("Backup " + keepNumber);
+
+                GitExecutor.GitResult addResult = GitExecutor.execute(repoDir, 20, "add", "-A", "staging", "meta", ".gitattributes");
+                if (!addResult.isSuccess()) {
+                    sender.sendMessage(formatMessage(TextFormatting.RED, "Failed staging rewritten snapshot #" + keepNumber + "."));
+                    return false;
+                }
+
+                GitExecutor.GitResult commitResult = GitExecutor.execute(repoDir, 20, "commit", "--allow-empty", "-m", message);
+                if (!commitResult.isSuccess()) {
+                    sender.sendMessage(formatMessage(TextFormatting.RED, "Failed committing rewritten snapshot #" + keepNumber + "."));
+                    return false;
+                }
+            }
+
+            GitExecutor.GitResult renameResult = GitExecutor.execute(repoDir, 20, "branch", "-M", branchName);
+            if (!renameResult.isSuccess()) {
+                sender.sendMessage(formatMessage(TextFormatting.RED, "Rewrite completed, but failed to restore branch name."));
+                return false;
+            }
+
+            return true;
+        } catch (Exception e) {
+            sender.sendMessage(formatMessage(TextFormatting.RED, "Multi-delete failed: " + e.getMessage()));
+            return false;
+        }
+    }
+
     private int assembleRegionsFromStaging(File repoDir, File worldDir) throws Exception {
         File[] dims = {
             new File(repoDir, "staging/overworld/region"),
@@ -622,6 +814,10 @@ public class BackupCommand extends CommandBase {
         }
         if ("delete".equals(sub) && parsed.userString != null) {
             sender.sendMessage(formatMessage(TextFormatting.RED, "delete does not support -m."));
+            return false;
+        }
+        if ("delete".equals(sub) && !parsed.looseTokens.isEmpty()) {
+            sender.sendMessage(formatMessage(TextFormatting.RED, "delete only accepts commit numbers, not text values: " + String.join(", ", parsed.looseTokens)));
             return false;
         }
         if (("status".equals(sub) || "help".equals(sub) || "push".equals(sub) || "pull".equals(sub) || "dialog".equals(sub) || "debug-dialog".equals(sub))
