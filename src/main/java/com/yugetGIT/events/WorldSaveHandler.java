@@ -219,6 +219,9 @@ public class WorldSaveHandler {
                 server.getPlayerList().sendMessage(new TextComponentString("\u00A76[yugetGIT] \u00A7d" + msg));
             }
         };
+        final String trigger = resolveAutoTrigger(message);
+        final int onlinePlayers = server.getPlayerList() == null ? 0 : server.getPlayerList().getCurrentPlayerCount();
+
         Runnable completion = () -> {
             if (resetExitFlagOnReturn) {
                 exitSaveTriggered.set(false);
@@ -232,7 +235,24 @@ public class WorldSaveHandler {
                 world.disableLevelSaving = wasSavingDisabled;
             }
         };
-        new CommitBuilder(repoDir, worldDir, message).commitAsync(feedback, completion);
+        CommitBuilder.AutoMessageContext autoMessageContext = new CommitBuilder.AutoMessageContext(worldKey, trigger, onlinePlayers);
+        new CommitBuilder(repoDir, worldDir, message, autoMessageContext).commitAsync(feedback, completion);
+    }
+
+    private String resolveAutoTrigger(String message) {
+        if (message == null) {
+            return "WORLD_SAVE";
+        }
+
+        String normalized = message.toLowerCase();
+        if (normalized.contains("exit")) {
+            return "SERVER_STOP";
+        }
+        if (normalized.contains("save") || normalized.contains("interval")) {
+            return "WORLD_SAVE";
+        }
+
+        return "WORLD_SAVE";
     }
 
     private void updateLastSeenPlayerPosition(MinecraftServer server) {

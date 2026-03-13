@@ -8,6 +8,8 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.management.PlayerList;
 import net.minecraft.util.text.TextComponentString;
 import net.minecraft.util.text.TextFormatting;
+import net.minecraft.util.text.event.ClickEvent;
+import net.minecraft.util.text.event.HoverEvent;
 import net.minecraft.world.BossInfo;
 import net.minecraft.world.BossInfoServer;
 import net.minecraft.world.World;
@@ -42,10 +44,13 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class BackupCommand extends CommandBase {
 
     private static final double MANUAL_SAVE_MIN_MOVEMENT_SQ = 9.0D;
+    private static final Pattern DETAIL_PATTERN = Pattern.compile("^(\\S+)\\s+world=\\\"([^\\\"]+)\\\"\\s+chunks=(\\d+)\\s+players=(\\d+)\\s+at=(.+)$");
     private static final Map<String, ManualSaveBaseline> MANUAL_SAVE_BASELINES = new ConcurrentHashMap<>();
 
     private static final class ManualSaveBaseline {
@@ -79,7 +84,7 @@ public class BackupCommand extends CommandBase {
 
     @Override
     public String getUsage(ICommandSender sender) {
-        return "/backup <help|save|fsave|list|worlds|restore|delete|push|pull|status>";
+        return "/backup <help|save|fsave|list|details|worlds|restore|delete|push|pull|status>";
     }
     
     @Override
@@ -199,12 +204,14 @@ public class BackupCommand extends CommandBase {
                 sendHelp(sender);
                 break;
             case "save":
-                String message = parsed.userString != null ? parsed.userString : "Manual save";
-                runManualSave(server, sender, repoDir, worldDir, message, parsed.force);
+                boolean hasCustomSaveMessage = parsed.userString != null && !parsed.userString.trim().isEmpty();
+                String message = hasCustomSaveMessage ? parsed.userString : "Manual save";
+                runManualSave(server, sender, repoDir, worldDir, message, parsed.force, hasCustomSaveMessage);
                 break;
             case "fsave":
-                String forcedMessage = parsed.userString != null ? parsed.userString : "Manual save";
-                runManualSave(server, sender, repoDir, worldDir, forcedMessage, true);
+                boolean hasCustomForcedMessage = parsed.userString != null && !parsed.userString.trim().isEmpty();
+                String forcedMessage = hasCustomForcedMessage ? parsed.userString : "Manual save";
+                runManualSave(server, sender, repoDir, worldDir, forcedMessage, true, hasCustomForcedMessage);
                 break;
                 
             case "list":
@@ -213,7 +220,7 @@ public class BackupCommand extends CommandBase {
                 }
                 sender.sendMessage(formatMessage(TextFormatting.GREEN, "Backups:"));
                 try {
-                    GitExecutor.GitResult result = GitExecutor.execute(repoDir, 10, "log", "--oneline");
+                    GitExecutor.GitResult result = GitExecutor.execute(repoDir, 10, "log", "--format=%H\u001F%s");
                     if (result.isSuccess() && !result.stdout.trim().isEmpty()) {
                         List<String> lines = new ArrayList<>(Arrays.asList(result.stdout.trim().split("\n")));
                         if (parsed.start) {
@@ -229,14 +236,24 @@ public class BackupCommand extends CommandBase {
                             int restoreNumber = parsed.start ? (displayIndex + 1) : (total - displayIndex);
                             String logLine = lines.get(displayIndex).trim();
                             if (!logLine.isEmpty()) {
-                                String[] parts = logLine.split(" ", 2);
+                                String[] parts = logLine.split("\\u001F", 2);
                                 if (parts.length == 2) {
-                                    String hash = parts[0];
-                                    String msg = parts[1];
-                                    sender.sendMessage(new TextComponentString(
-                                        TextFormatting.GRAY + "#" + restoreNumber + " " +
-                                        TextFormatting.YELLOW + hash + TextFormatting.GRAY + " " + msg
-                                    ));
+                                    String hash = parts[0].trim();
+                                    String shortHash = hash.length() > 7 ? hash.substring(0, 7) : hash;
+                                    String messagePreview = abbreviate(parts[1].trim(), 66);
+
+                                    TextComponentString lineComponent = new TextComponentString(
+                                        TextFormatting.DARK_GRAY + "#" + restoreNumber + " "
+                                            + TextFormatting.AQUA + shortHash + TextFormatting.DARK_GRAY + "  "
+                                            + TextFormatting.WHITE + messagePreview + " "
+                                    );
+
+                                    TextComponentString detailsButton = new TextComponentString(TextFormatting.AQUA + "[details]");
+                                    detailsButton.getStyle().setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/backup details -hash " + hash));
+                                    detailsButton.getStyle().setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                                        new TextComponentString(TextFormatting.GRAY + "Show compact commit details")));
+                                    lineComponent.appendSibling(detailsButton);
+                                    sender.sendMessage(lineComponent);
                                 } else {
                                     sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "#" + restoreNumber + " " + logLine));
                                 }
@@ -248,6 +265,13 @@ public class BackupCommand extends CommandBase {
                 } catch (Exception e) {
                     sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to fetch backups."));
                 }
+                break;
+
+            case "details":
+                if (!hasRepository(sender, repoDir)) {
+                    return;
+                }
+                showCommitDetails(sender, repoDir, parsed);
                 break;
                 
             case "worlds":
@@ -383,7 +407,7 @@ public class BackupCommand extends CommandBase {
                 break;
             default:
                 sender.sendMessage(formatMessage(TextFormatting.RED, "ERROR: Invalid /backup command: '" + sub + "'. Cannot safely execute."));
-                sender.sendMessage(formatMessage(TextFormatting.RED, "Available: help, save, list, worlds, restore, delete, push, pull, status"));
+                sender.sendMessage(formatMessage(TextFormatting.RED, "Available: help, save, list, details, worlds, restore, delete, push, pull, status"));
                 break;
         }
     }
@@ -393,6 +417,7 @@ public class BackupCommand extends CommandBase {
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup fsave -m \"message text\""));
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup save [-force] -m \"message text\""));
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup list [-all] [-start] [-(number)]"));
+        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup details -hash <id>"));
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup restore [-hash <id>] [-(number)]"));
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup delete [-all] [-hash <id>] [-(number)]"));
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup worlds"));
@@ -414,7 +439,88 @@ public class BackupCommand extends CommandBase {
         }
     }
 
-    private void runManualSave(MinecraftServer server, ICommandSender sender, File repoDir, File worldDir, String message, boolean force) {
+    private void showCommitDetails(ICommandSender sender, File repoDir, ParsedArgs parsed) {
+        String ref = null;
+        if (parsed.hash != null && !parsed.hash.trim().isEmpty()) {
+            ref = parsed.hash.replaceAll("[<>]", "").trim();
+        } else if (parsed.count > 0) {
+            ref = buildRestoreRefFromNumber(repoDir, parsed.count);
+        }
+
+        if (ref == null || ref.isEmpty()) {
+            sender.sendMessage(formatMessage(TextFormatting.RED, "Use /backup details -hash <id> (or /backup details -<number>)."));
+            return;
+        }
+
+        try {
+            GitExecutor.GitResult result = GitExecutor.execute(repoDir, 10, "log", "-1", "--date=iso-local", "--format=%H\n%an\n%ad\n%s\n%b", ref);
+            if (!result.isSuccess() || result.stdout == null || result.stdout.trim().isEmpty()) {
+                sender.sendMessage(formatMessage(TextFormatting.RED, "Could not load commit details for: " + ref));
+                return;
+            }
+
+            String[] lines = result.stdout.split("\n");
+            String hash = lines.length > 0 ? lines[0].trim() : ref;
+            String author = lines.length > 1 ? lines[1].trim() : "unknown";
+            String committedAt = lines.length > 2 ? lines[2].trim() : "unknown";
+            String subject = lines.length > 3 ? lines[3].trim() : "(no subject)";
+            String body = lines.length > 4 ? String.join("\n", Arrays.copyOfRange(lines, 4, lines.length)).trim() : "";
+            String shortHash = hash.length() > 10 ? hash.substring(0, 10) : hash;
+
+            sender.sendMessage(formatMessage(TextFormatting.AQUA, "Commit " + shortHash));
+            sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- title: " + TextFormatting.WHITE + subject));
+            sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- author: " + TextFormatting.WHITE + author));
+            sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- date: " + TextFormatting.WHITE + committedAt));
+            if (!body.isEmpty()) {
+                String[] bodyLines = body.split("\n");
+                Matcher detailMatcher = DETAIL_PATTERN.matcher(bodyLines[0].trim());
+                if (detailMatcher.matches()) {
+                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- stats: " + TextFormatting.WHITE + detailMatcher.group(1)));
+                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- world: " + TextFormatting.WHITE + detailMatcher.group(2)));
+                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- chunks: " + TextFormatting.WHITE + detailMatcher.group(3)));
+                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- players: " + TextFormatting.WHITE + detailMatcher.group(4)));
+                    boolean hasExtraLines = bodyLines.length > 1;
+                    String whenPrefix = hasExtraLines ? "|- at: " : "`- at: ";
+                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + whenPrefix + TextFormatting.WHITE + detailMatcher.group(5)));
+
+                    for (int i = 1; i < bodyLines.length; i++) {
+                        String extra = bodyLines[i].trim();
+                        if (extra.isEmpty()) {
+                            continue;
+                        }
+                        String branch = (i == bodyLines.length - 1) ? "`- " : "|- ";
+                        sender.sendMessage(new TextComponentString(TextFormatting.GRAY + branch + TextFormatting.WHITE + extra));
+                    }
+                } else {
+                    for (int i = 0; i < bodyLines.length; i++) {
+                        String bodyLine = bodyLines[i].trim();
+                        if (bodyLine.isEmpty()) {
+                            continue;
+                        }
+                        String branch = (i == bodyLines.length - 1) ? "`- " : "|- ";
+                        sender.sendMessage(new TextComponentString(TextFormatting.GRAY + branch + TextFormatting.WHITE + bodyLine));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to read commit details: " + e.getMessage()));
+        }
+    }
+
+    private String abbreviate(String text, int maxLength) {
+        if (text == null) {
+            return "";
+        }
+
+        String normalized = text.trim();
+        if (normalized.length() <= maxLength) {
+            return normalized;
+        }
+
+        return normalized.substring(0, Math.max(0, maxLength - 3)) + "...";
+    }
+
+    private void runManualSave(MinecraftServer server, ICommandSender sender, File repoDir, File worldDir, String message, boolean force, boolean customMessageProvided) {
         String worldKey = worldDir.getName();
         if (!force
             && yugetGITConfig.backup.manualSaveMovementGuardEnabled
@@ -472,7 +578,7 @@ public class BackupCommand extends CommandBase {
                 return;
             }
 
-            Consumer<String> feedback = msg -> sendProgress(sender, msg);
+            Consumer<String> feedback = msg -> sendProgress(sender, msg, repoDir);
             Consumer<CommitBuilder.ProgressSnapshot> progress = snapshot -> {
                 SaveProgressTracker.update(snapshot.getStage(), snapshot.getPercent(), snapshot.getChangedChunks(), snapshot.getBytesWritten());
                 updateBossBar(server, sender, bossBar, snapshot);
@@ -483,7 +589,12 @@ public class BackupCommand extends CommandBase {
                 clearBossBar(sender, bossBar);
             };
 
-            new CommitBuilder(repoDir, worldDir, message).commitAsync(feedback, progress, completion);
+            int onlinePlayers = server.getPlayerList() == null ? 0 : server.getPlayerList().getCurrentPlayerCount();
+            String trigger = force ? "MANUAL_FORCE_SAVE" : "MANUAL_SAVE";
+            String note = customMessageProvided ? message : null;
+            CommitBuilder.AutoMessageContext autoMessageContext = new CommitBuilder.AutoMessageContext(worldKey, trigger, onlinePlayers, note);
+
+            new CommitBuilder(repoDir, worldDir, message, autoMessageContext).commitAsync(feedback, progress, completion);
         });
     }
 
@@ -563,7 +674,7 @@ public class BackupCommand extends CommandBase {
         }
     }
 
-    private void sendProgress(ICommandSender sender, String message) {
+    private void sendProgress(ICommandSender sender, String message, File repoDir) {
         String lower = message.toLowerCase();
         boolean important = lower.contains("failed") || lower.contains("error") || lower.contains("skipped") || lower.contains("committed");
         if (sender instanceof EntityPlayerMP && !important) {
@@ -572,7 +683,31 @@ public class BackupCommand extends CommandBase {
 
         String formatted = TextFormatting.GOLD + "[yugetGIT] " + TextFormatting.LIGHT_PURPLE + message;
         if (sender instanceof EntityPlayerMP) {
-            ((EntityPlayerMP) sender).sendMessage(new TextComponentString(formatted));
+            EntityPlayerMP player = (EntityPlayerMP) sender;
+            if (lower.contains("backup committed")) {
+                TextComponentString line = new TextComponentString(formatted + " ");
+                String commitHash = null;
+                try {
+                    GitExecutor.GitResult hashResult = GitExecutor.execute(repoDir, 10, "rev-parse", "--verify", "HEAD");
+                    if (hashResult.isSuccess() && hashResult.stdout != null && !hashResult.stdout.trim().isEmpty()) {
+                        commitHash = hashResult.stdout.trim();
+                    }
+                } catch (Exception ignored) {
+                }
+
+                if (commitHash != null) {
+                    TextComponentString detailsButton = new TextComponentString(TextFormatting.AQUA + "[details]");
+                    detailsButton.getStyle().setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/backup details -hash " + commitHash));
+                    detailsButton.getStyle().setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                        new TextComponentString(TextFormatting.GRAY + "Show full commit details")));
+                    line.appendSibling(detailsButton);
+                }
+
+                player.sendMessage(line);
+                return;
+            }
+
+            player.sendMessage(new TextComponentString(formatted));
             return;
         }
         sender.sendMessage(new TextComponentString(formatted));

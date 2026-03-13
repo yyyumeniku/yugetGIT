@@ -1,6 +1,8 @@
 package com.yugetGIT.core.git;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import com.yugetGIT.util.BackgroundExecutor;
 import com.yugetGIT.util.SaveProgressTracker;
@@ -47,11 +49,51 @@ public class CommitBuilder {
     private final File repoDir;
     private final File worldDir;
     private final String message;
+    private final AutoMessageContext autoMessageContext;
+
+    public static final class AutoMessageContext {
+        private final String worldName;
+        private final String trigger;
+        private final int playerCount;
+        private final String note;
+
+        public AutoMessageContext(String worldName, String trigger, int playerCount) {
+            this(worldName, trigger, playerCount, null);
+        }
+
+        public AutoMessageContext(String worldName, String trigger, int playerCount, String note) {
+            this.worldName = worldName;
+            this.trigger = trigger;
+            this.playerCount = playerCount;
+            this.note = note;
+        }
+
+        public String getWorldName() {
+            return worldName;
+        }
+
+        public String getTrigger() {
+            return trigger;
+        }
+
+        public int getPlayerCount() {
+            return playerCount;
+        }
+
+        public String getNote() {
+            return note;
+        }
+    }
 
     public CommitBuilder(File repoDir, File worldDir, String message) {
+        this(repoDir, worldDir, message, null);
+    }
+
+    public CommitBuilder(File repoDir, File worldDir, String message, AutoMessageContext autoMessageContext) {
         this.repoDir = repoDir;
         this.worldDir = worldDir;
         this.message = message;
+        this.autoMessageContext = autoMessageContext;
     }
 
     public void commitAsync() {
@@ -129,11 +171,29 @@ public class CommitBuilder {
                 }
 
                 feedback.accept("Committing snapshot...");
-                GitExecutor.GitResult commitResult = GitExecutor.execute(repoDir, 120, "commit", "-m", message);
+                String commitMessage = buildCommitMessage(stageResult);
+                String subject = commitMessage;
+                String body = null;
+                int newline = commitMessage.indexOf('\n');
+                if (newline >= 0) {
+                    subject = commitMessage.substring(0, newline).trim();
+                    body = commitMessage.substring(newline + 1).trim();
+                }
+
+                List<String> commitArgs = new ArrayList<>();
+                commitArgs.add("commit");
+                commitArgs.add("-m");
+                commitArgs.add(subject);
+                if (body != null && !body.isEmpty()) {
+                    commitArgs.add("-m");
+                    commitArgs.add(body);
+                }
+
+                GitExecutor.GitResult commitResult = GitExecutor.execute(repoDir, 120, commitArgs.toArray(new String[0]));
                 
                 if (commitResult.isSuccess()) {
                     double backupSizeMb = stageResult.getBytesWritten() / (1024.0 * 1024.0);
-                    feedback.accept(String.format("Backup committed: %s (%.2f MB)", message, backupSizeMb));
+                    feedback.accept(String.format("Backup committed (%.2f MB)", backupSizeMb));
                     if (progress != null) {
                         progress.accept(new ProgressSnapshot("Committed", 100, stageResult.getChangedChunks(), stageResult.getBytesWritten()));
                     }
@@ -162,6 +222,20 @@ public class CommitBuilder {
                 completion.run();
             }
         });
+    }
+
+    private String buildCommitMessage(WorldSnapshotStager.StageResult stageResult) {
+        if (autoMessageContext == null) {
+            return message;
+        }
+
+        return AutoCommitMessageFormatter.format(
+            autoMessageContext.getWorldName(),
+            autoMessageContext.getTrigger(),
+            stageResult.getChangedChunks(),
+            autoMessageContext.getPlayerCount(),
+            autoMessageContext.getNote()
+        );
     }
 
     private void runPeriodicMaintenanceIfNeeded() {
