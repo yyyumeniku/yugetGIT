@@ -18,8 +18,8 @@ Stage 1:
 - [ ] backup scheduling
 - [x] git push
 - [x] git pull
-- [ ] git fetch
-- [ ] github repo creation
+- [x] git fetch
+- [x] github repo creation
 
 
 This projects has been able to be succesful because of:
