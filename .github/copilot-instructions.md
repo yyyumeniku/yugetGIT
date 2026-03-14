@@ -195,7 +195,7 @@ Repo name configurable in yugetGIT UI (default: "minecraft-worlds").
 
 ### Switching between modes
 Switching modes is a destructive migration — warn the user and require confirmation.
-Provide a /backup migrate command that handles the transition.
+Provide a /yu backup migrate command that handles the transition.
 
 ---
 
@@ -339,7 +339,7 @@ Push runs on BackgroundExecutor, reports progress via in-game chat messages.
 ```
 "yugetGIT: Pushing... 45% (3.2 MB / 7.1 MB) [MyWorld]"
 "yugetGIT: Push complete. 7.1 MB pushed to origin/main [MyWorld]"
-"yugetGIT: Push failed. Not configured — see /backup status"
+"yugetGIT: Push failed. Not configured — see /yu backup status"
 ```
 
 ### Push config
@@ -443,8 +443,8 @@ src/main/java/com/yugetGIT/
         MergeSubcommand.java
         PushSubcommand.java
         PullSubcommand.java
-        StatusSubcommand.java           # /backup status — shows credential state, config
-        MigrateSubcommand.java          # /backup migrate — switch repo modes
+        StatusSubcommand.java           # /yu backup status — shows credential state, config
+        MigrateSubcommand.java          # /yu backup migrate — switch repo modes
     ui/
         TimelineGui.java
         CommitNode.java
@@ -534,7 +534,7 @@ Critical test cases:
 - GitCredentialChecker (user.name, user.email, credential.helper checks)
 - WorldSaveHandler + ServerStopHandler
 - yugetGITConfig: all options
-- Commands: /backup save, list, restore, push, pull, status
+- Commands: /yu backup save, list, restore, status, /yu push, /yu pull
 - Tests: all critical test cases
 
 **Stage 2 — Repo Mode + Settings UI**
@@ -545,8 +545,8 @@ Critical test cases:
 - Tests: branch naming, mode switching, name sanitization
 
 **Stage 3 — Branching**
-- /backup branch, checkout, merge
-- Branch metadata in /backup list
+- /yu backup branch, checkout, merge
+- Branch metadata in /yu backup list
 - Tests: branch create, checkout, merge conflict
 
 **Stage 4 — Timeline UI + Screenshots**
@@ -617,6 +617,9 @@ Use a unified `ParsedArgs` internal parser loop inside `execute` before routing 
 
 ## yugetGIT UI Feedback Standard
 - Chat logs are for static status/error messages using `TextFormatting.GOLD` and standard formats.
+- Chat prefix format for command output is mandatory: `[yugetGIT]  ` (two spaces after the closing bracket).
+- Multi-line command responses must follow backup-list treatment: one prefixed header/status line, then detail lines without repeating the prefix.
+- This formatting rule applies to all current commands and every new command/subcommand added in future tasks.
 - Temporary process/progress feedback should prefer BossBar updates (stage/progress/countdown) and only fall back to Action bar when BossBar is not practical.
 - BossBar text must contain only necessary content and should avoid repeating `[yugetGIT]` prefix spam.
 - For restore flows, show reconnect countdown in BossBar before disconnecting players.
@@ -628,17 +631,18 @@ Required `/yu` subcommands:
 - `/yu help`
 - `/yu init`
 - `/yu repo add <url>`
-- `/yu list`
+- `/yu backup <help|save|list|details|restore|worlds|status>`
+- `/yu debug-dialog`
 - `/yu fetch`
 - `/yu push`
 - `/yu pull`
 
 Behavior rules:
-- User must run `/yu init` after entering a world and before running `/backup` operations.
+- User must run `/yu init` after entering a world and before running `/yu backup` operations.
 - Do not use OAuth/token storage in mod code; rely on system git credentials.
 - `init` must initialize local repository state and switch/create a world branch (`world/<worldName>`).
 - `repo add` must set/update local `origin` remote and accept full remote URLs (`https://...` and `git@...`).
-- `list` should mirror the compact backup list output for quick commit browsing.
+- `backup list` should mirror the compact backup list output for quick commit browsing.
 - `fetch` should download remote refs without changing local branch state.
 - `push` and `pull` must target the active world branch and report clear success/failure chat lines.
 - Remote repository creation is user-hosted; mod must only configure local git and explain this clearly.

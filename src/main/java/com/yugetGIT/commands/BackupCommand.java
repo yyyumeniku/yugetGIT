@@ -81,7 +81,7 @@ public class BackupCommand extends CommandBase {
 
     @Override
     public String getUsage(ICommandSender sender) {
-        return "/backup <help|save|list|details|worlds|restore|status>";
+        return "/yu backup <help|save|list|details|worlds|restore|status>";
     }
     
     @Override
@@ -95,7 +95,15 @@ public class BackupCommand extends CommandBase {
     }
 
     private TextComponentString formatMessage(TextFormatting color, String text) {
-        return new TextComponentString(TextFormatting.GOLD + "[yugetGIT] " + color + text);
+        return new TextComponentString(TextFormatting.GOLD + "[yugetGIT]  " + color + text);
+    }
+
+    private TextComponentString plainMessage(TextFormatting color, String text) {
+        return new TextComponentString(color + text);
+    }
+
+    private void sendPlainLine(ICommandSender sender, TextFormatting color, String text) {
+        sender.sendMessage(plainMessage(color, text));
     }
 
     private static class ParsedArgs {
@@ -210,7 +218,6 @@ public class BackupCommand extends CommandBase {
                 if (!hasRepository(sender, repoDir)) {
                     return;
                 }
-                sender.sendMessage(formatMessage(TextFormatting.GREEN, "Commits:"));
                 try {
                     GitExecutor.GitResult result = GitExecutor.execute(repoDir, 10, "log", "--format=%H\u001F%s");
                     if (result.isSuccess() && !result.stdout.trim().isEmpty()) {
@@ -220,7 +227,7 @@ public class BackupCommand extends CommandBase {
                         int total = lines.size();
                         int limit = parsed.count == -1 ? 10 : parsed.count;
                         int showCount = Math.min(limit, total);
-                        sender.sendMessage(formatMessage(TextFormatting.WHITE, "Showing " + showCount + " / " + total + " commits."));
+                        sender.sendMessage(formatMessage(TextFormatting.GREEN, "Backups: showing " + showCount + " / " + total + " commits."));
 
                         int startIndex = parsed.start ? 0 : Math.max(0, total - showCount);
                         appendRemotePendingCommits(sender, repoDir, total);
@@ -242,7 +249,7 @@ public class BackupCommand extends CommandBase {
                                     );
 
                                     TextComponentString detailsButton = new TextComponentString(TextFormatting.AQUA + "[details]");
-                                    detailsButton.getStyle().setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/backup details -hash " + hash));
+                                    detailsButton.getStyle().setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/yu backup details -hash " + hash));
                                     detailsButton.getStyle().setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
                                         new TextComponentString(TextFormatting.GRAY + "Show compact commit details")));
                                     lineComponent.appendSibling(detailsButton);
@@ -317,7 +324,7 @@ public class BackupCommand extends CommandBase {
                     int requestedNumber = parsed.count;
                     targetRef = buildRestoreRefFromNumber(repoDir, requestedNumber);
                     if (targetRef == null) {
-                        sender.sendMessage(formatMessage(TextFormatting.RED, "Backup number out of range. Run /backup list first."));
+                        sender.sendMessage(formatMessage(TextFormatting.RED, "Backup number out of range. Run /yu backup list first."));
                         return;
                     }
                 }
@@ -332,44 +339,37 @@ public class BackupCommand extends CommandBase {
             case "status":
                 sendStatus(sender, repoDir);
                 break;
-            case "dialog":
-            case "debug-dialog":
-                sender.sendMessage(formatMessage(TextFormatting.AQUA, "Opening Pre-Launch Dialog on Host OS..."));
-                new Thread(() -> {
-                    try {
-                        javax.swing.SwingUtilities.invokeAndWait(() -> com.yugetGIT.prelauncher.PreLaunchGitDialog.showDialog());
-                    } catch (Exception e) {}
-                }).start();
-                break;
             default:
-                sender.sendMessage(formatMessage(TextFormatting.RED, "ERROR: Invalid /backup command: '" + sub + "'. Cannot safely execute."));
-                sender.sendMessage(formatMessage(TextFormatting.RED, "Available: help, save, list, details, worlds, restore, status"));
+                sender.sendMessage(formatMessage(TextFormatting.RED, "ERROR: Invalid /yu backup command: '" + sub + "'. Cannot safely execute."));
+                sendPlainLine(sender, TextFormatting.RED, "Available: help, save, list, details, worlds, restore, status");
                 break;
         }
     }
 
     private void sendHelp(ICommandSender sender) {
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup save -m \"message text\""));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup save [--force] -m \"message text\""));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup list [-all] [-start] [-(number)]"));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup details -hash <id>"));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup restore [-hash <id>] [-(number)]"));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup worlds"));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup worlds delete \"World Folder\""));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup status"));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/backup debug-dialog"));
+        sender.sendMessage(formatMessage(TextFormatting.AQUA, "Available /yu backup commands:"));
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu backup save -m \"message text\"");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu backup save [--force] -m \"message text\"");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu backup list [-all] [-start] [-(number)]");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu backup details -hash <id>");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu backup restore [-hash <id>] [-(number)]");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu backup worlds");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu backup worlds delete \"World Folder\"");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu backup status");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu debug-dialog");
     }
 
     private void sendStatus(ICommandSender sender, File repoDir) {
         boolean userConfigured = GitCredentialChecker.hasUserName() && GitCredentialChecker.hasUserEmail();
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "Identity Configured: " + (userConfigured ? TextFormatting.GREEN + "Yes" : TextFormatting.RED + "No")));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "Git Resolved: " + (com.yugetGIT.core.git.GitBootstrap.isGitResolved() ? TextFormatting.GREEN + "Yes" : TextFormatting.RED + "No")));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "Git-LFS Available: " + (com.yugetGIT.config.StateProperties.isGitLfsAvailable() ? TextFormatting.GREEN + "Yes" : TextFormatting.RED + "No")));
+        sender.sendMessage(formatMessage(TextFormatting.AQUA, "Backup status:"));
+        sendPlainLine(sender, TextFormatting.WHITE, "Identity Configured: " + (userConfigured ? TextFormatting.GREEN + "Yes" : TextFormatting.RED + "No"));
+        sendPlainLine(sender, TextFormatting.WHITE, "Git Resolved: " + (com.yugetGIT.core.git.GitBootstrap.isGitResolved() ? TextFormatting.GREEN + "Yes" : TextFormatting.RED + "No"));
+        sendPlainLine(sender, TextFormatting.WHITE, "Git-LFS Available: " + (com.yugetGIT.config.StateProperties.isGitLfsAvailable() ? TextFormatting.GREEN + "Yes" : TextFormatting.RED + "No"));
         
         File gitDir = new File(repoDir, ".git");
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "Repository Built: " + (gitDir.exists() ? TextFormatting.GREEN + "Yes" : TextFormatting.RED + "No")));
+        sendPlainLine(sender, TextFormatting.WHITE, "Repository Built: " + (gitDir.exists() ? TextFormatting.GREEN + "Yes" : TextFormatting.RED + "No"));
         if (gitDir.exists()) {
-            sender.sendMessage(formatMessage(TextFormatting.WHITE, "LFS Tracking Rules: " + (GitLfsManager.hasRequiredTrackingRules(repoDir) ? TextFormatting.GREEN + "Ready" : TextFormatting.YELLOW + "Missing (.gitattributes not fully configured)")));
+            sendPlainLine(sender, TextFormatting.WHITE, "LFS Tracking Rules: " + (GitLfsManager.hasRequiredTrackingRules(repoDir) ? TextFormatting.GREEN + "Ready" : TextFormatting.YELLOW + "Missing (.gitattributes not fully configured)"));
         }
     }
 
@@ -382,7 +382,7 @@ public class BackupCommand extends CommandBase {
         }
 
         if (ref == null || ref.isEmpty()) {
-            sender.sendMessage(formatMessage(TextFormatting.RED, "Use /backup details -hash <id> (or /backup details -<number>)."));
+            sender.sendMessage(formatMessage(TextFormatting.RED, "Use /yu backup details -hash <id> (or /yu backup details -<number>)."));
             return;
         }
 
@@ -485,7 +485,7 @@ public class BackupCommand extends CommandBase {
                         );
 
                         TextComponentString detailsButton = new TextComponentString(TextFormatting.AQUA + "[details]");
-                        detailsButton.getStyle().setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/backup details -hash " + hash));
+                        detailsButton.getStyle().setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/yu backup details -hash " + hash));
                         detailsButton.getStyle().setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
                             new TextComponentString(TextFormatting.GRAY + "Show compact commit details")));
                         lineComponent.appendSibling(detailsButton);
@@ -505,7 +505,7 @@ public class BackupCommand extends CommandBase {
         if (!force
             && yugetGITConfig.backup.manualSaveMovementGuardEnabled
             && !hasMeaningfulManualSaveMovement(server, worldKey)) {
-            sender.sendMessage(formatMessage(TextFormatting.YELLOW, "No changes detected, backup skipped. If you still want a backup, use /backup save --force."));
+            sender.sendMessage(formatMessage(TextFormatting.YELLOW, "No changes detected, backup skipped. If you still want a backup, use /yu backup save --force."));
             return;
         }
 
@@ -538,7 +538,7 @@ public class BackupCommand extends CommandBase {
         World senderWorld = sender.getEntityWorld();
         WorldServer activeWorld = senderWorld instanceof WorldServer ? (WorldServer) senderWorld : (WorldServer) server.getEntityWorld();
         if (activeWorld == null) {
-            sender.sendMessage(formatMessage(TextFormatting.RED, "Unable to resolve active world for /backup save."));
+            sender.sendMessage(formatMessage(TextFormatting.RED, "Unable to resolve active world for /yu backup save."));
             return;
         }
 
@@ -686,7 +686,7 @@ public class BackupCommand extends CommandBase {
             return;
         }
 
-        String formatted = TextFormatting.GOLD + "[yugetGIT] " + TextFormatting.LIGHT_PURPLE + message;
+        String formatted = TextFormatting.GOLD + "[yugetGIT]  " + TextFormatting.LIGHT_PURPLE + message;
         if (sender instanceof EntityPlayerMP) {
             EntityPlayerMP player = (EntityPlayerMP) sender;
             if (lower.contains("backup committed")) {
@@ -702,7 +702,7 @@ public class BackupCommand extends CommandBase {
 
                 if (commitHash != null) {
                     TextComponentString detailsButton = new TextComponentString(TextFormatting.AQUA + "[details]");
-                    detailsButton.getStyle().setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/backup details -hash " + commitHash));
+                    detailsButton.getStyle().setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/yu backup details -hash " + commitHash));
                     detailsButton.getStyle().setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
                         new TextComponentString(TextFormatting.GRAY + "Show full commit details")));
                     line.appendSibling(detailsButton);
@@ -1000,7 +1000,7 @@ public class BackupCommand extends CommandBase {
             sender.sendMessage(formatMessage(TextFormatting.RED, "restore supports only -hash <id> or -<number>."));
             return false;
         }
-        if (("status".equals(sub) || "help".equals(sub) || "dialog".equals(sub) || "debug-dialog".equals(sub))
+        if (("status".equals(sub) || "help".equals(sub))
             && (parsed.all || parsed.start || parsed.hash != null || parsed.userString != null || parsed.count != -1)) {
             sender.sendMessage(formatMessage(TextFormatting.RED, sub + " does not take flags."));
             return false;
@@ -1014,7 +1014,7 @@ public class BackupCommand extends CommandBase {
             return true;
         }
 
-        sender.sendMessage(formatMessage(TextFormatting.RED, "No backup repository exists for this world yet. Run /backup save first."));
+        sender.sendMessage(formatMessage(TextFormatting.RED, "No backup repository exists for this world yet. Run /yu backup save first."));
         return false;
     }
 }

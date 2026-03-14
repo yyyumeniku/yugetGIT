@@ -14,14 +14,14 @@ public class yugetGITConfig {
     public static GitNetworkSettings gitNetwork = new GitNetworkSettings();
 
     public static class BackupSettings {
-        @Config.Comment("Enable auto-commit on world save after the first manual /backup save exists")
+        @Config.Comment("Enable auto-commit on world save after the first manual /yu backup save exists")
         public boolean autoCommitOnSave = false;
 
         @Config.Comment("Minutes between automatic commits; 0 disables interval commits")
         @Config.RangeInt(min = 0, max = 1440)
         public int commitIntervalMinutes = 0;
 
-        @Config.Comment("When true, /backup save skips if player movement since last manual backup is minimal. Use /backup fsave to force.")
+        @Config.Comment("When true, /yu backup save skips if player movement since last manual backup is minimal. Use /yu backup save --force to force.")
         public boolean manualSaveMovementGuardEnabled = true;
     }
 

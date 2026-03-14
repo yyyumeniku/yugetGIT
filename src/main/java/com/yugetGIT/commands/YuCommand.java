@@ -17,8 +17,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.text.TextComponentString;
 import net.minecraft.util.text.TextFormatting;
-import net.minecraft.util.text.event.ClickEvent;
-import net.minecraft.util.text.event.HoverEvent;
 import net.minecraft.world.BossInfo;
 import net.minecraft.world.BossInfoServer;
 
@@ -47,6 +45,7 @@ public class YuCommand extends CommandBase {
     private static final String MOD_ICON_FILE = "mod-icon.png";
     private static final String BRANCH_INDEX_FILE = "branch-index.md";
     private static final String README_FILE = "README.md";
+    private final BackupCommand backupCommand = new BackupCommand();
 
     @Override
     public String getName() {
@@ -55,7 +54,7 @@ public class YuCommand extends CommandBase {
 
     @Override
     public String getUsage(ICommandSender sender) {
-        return "/yu <help|init|repo|list|fetch|push|pull|merge|reset>";
+        return "/yu <help|init|repo|backup|debug-dialog|fetch|push|pull|merge|reset>";
     }
 
     @Override
@@ -71,7 +70,11 @@ public class YuCommand extends CommandBase {
     @Override
     public List<String> getTabCompletions(MinecraftServer server, ICommandSender sender, String[] args, @Nullable BlockPos targetPos) {
         if (args.length == 1) {
-            return getListOfStringsMatchingLastWord(args, "help", "init", "repo", "list", "fetch", "push", "pull", "merge", "reset");
+            return getListOfStringsMatchingLastWord(args, "help", "init", "repo", "backup", "debug-dialog", "fetch", "push", "pull", "merge", "reset");
+        }
+
+        if (args.length == 2 && "backup".equalsIgnoreCase(args[0])) {
+            return getListOfStringsMatchingLastWord(args, "help", "save", "list", "details", "restore", "worlds", "status");
         }
 
         if (args.length == 2 && "repo".equalsIgnoreCase(args[0])) {
@@ -115,12 +118,15 @@ public class YuCommand extends CommandBase {
             case "repo":
                 runRepo(server, sender, args);
                 return;
-            case "list":
+            case "backup":
+                runBackupSubcommand(server, sender, args);
+                return;
+            case "debug-dialog":
                 if (args.length != 1) {
-                    sender.sendMessage(formatMessage(TextFormatting.RED, "Invalid /yu list usage. Run /yu help."));
+                    sender.sendMessage(formatMessage(TextFormatting.RED, "Invalid /yu debug-dialog usage. Run /yu help."));
                     return;
                 }
-                runList(server, sender);
+                openDebugDialog(sender);
                 return;
             case "fetch":
                 if (args.length > 2) {
@@ -160,14 +166,53 @@ public class YuCommand extends CommandBase {
     }
 
     private void sendHelp(ICommandSender sender) {
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/yu init"));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/yu repo add <url>"));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/yu list"));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/yu fetch [remote]"));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/yu push [--force]"));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/yu pull"));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/yu merge"));
-        sender.sendMessage(formatMessage(TextFormatting.WHITE, "/yu reset --hard <ref>"));
+        sender.sendMessage(formatMessage(TextFormatting.AQUA, "Available /yu commands:"));
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu init");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu repo add <url>");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu backup <help|save|list|details|restore|worlds|status>");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu debug-dialog");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu fetch [remote]");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu push [--force]");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu pull");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu merge");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu reset --hard <ref>");
+    }
+
+    private void runBackupSubcommand(MinecraftServer server, ICommandSender sender, String[] args) throws CommandException {
+        String[] backupArgs;
+        if (args.length == 1) {
+            backupArgs = new String[] {"help"};
+        } else {
+            backupArgs = Arrays.copyOfRange(args, 1, args.length);
+        }
+        backupCommand.execute(server, sender, backupArgs);
+    }
+
+    private void openDebugDialog(ICommandSender sender) {
+        sender.sendMessage(formatMessage(TextFormatting.AQUA, "Opening Pre-Launch Dialog on Host OS..."));
+        new Thread(() -> {
+            try {
+                GitBootstrap.resolveFromPath();
+                boolean gitResolved = GitBootstrap.isGitResolved();
+                boolean lfsResolved = com.yugetGIT.config.StateProperties.isGitLfsAvailable();
+
+                javax.swing.SwingUtilities.invokeAndWait(() -> {
+                    if (gitResolved && lfsResolved) {
+                        javax.swing.JOptionPane.showMessageDialog(
+                            null,
+                            "Git and Git-LFS are already configured.\nNo bootstrap action is required.",
+                            "yugetGIT Debug Dialog",
+                            javax.swing.JOptionPane.INFORMATION_MESSAGE
+                        );
+                        return;
+                    }
+
+                    com.yugetGIT.prelauncher.PreLaunchGitDialog.showDialog();
+                });
+            } catch (Exception e) {
+                sender.sendMessage(formatMessage(TextFormatting.RED, "Debug dialog failed: " + e.getMessage()));
+            }
+        }, "yugetgit-debug-dialog").start();
     }
 
     private void runReset(MinecraftServer server, ICommandSender sender, String[] args) {
@@ -202,61 +247,6 @@ public class YuCommand extends CommandBase {
             }
         } catch (Exception e) {
             sender.sendMessage(formatMessage(TextFormatting.RED, "Reset failed: " + e.getMessage()));
-        }
-    }
-
-    private void runList(MinecraftServer server, ICommandSender sender) {
-        File repoDir = resolveWorldRepo(server);
-        File gitDir = new File(repoDir, ".git");
-        if (!gitDir.exists()) {
-            sender.sendMessage(formatMessage(TextFormatting.RED, "Run /yu init first."));
-            return;
-        }
-
-        sender.sendMessage(formatMessage(TextFormatting.GREEN, "Commits:"));
-        try {
-            GitExecutor.GitResult result = GitExecutor.execute(repoDir, 10, "log", "--format=%H\u001F%s");
-            if (!result.isSuccess() || result.stdout == null || result.stdout.trim().isEmpty()) {
-                sender.sendMessage(formatMessage(TextFormatting.GRAY, "No backups found."));
-                return;
-            }
-
-            List<String> lines = new ArrayList<>(Arrays.asList(result.stdout.trim().split("\\n")));
-            int total = lines.size();
-            int showCount = Math.min(10, total);
-            sender.sendMessage(formatMessage(TextFormatting.WHITE, "Showing " + showCount + " / " + total + " commits."));
-
-            for (int displayIndex = 0; displayIndex < showCount; displayIndex++) {
-                int restoreNumber = total - displayIndex;
-                String logLine = lines.get(displayIndex).trim();
-                if (logLine.isEmpty()) {
-                    continue;
-                }
-
-                String[] parts = logLine.split("\\u001F", 2);
-                if (parts.length == 2) {
-                    String hash = parts[0].trim();
-                    String shortHash = hash.length() > 7 ? hash.substring(0, 7) : hash;
-                    String messagePreview = abbreviate(parts[1].trim(), 66);
-
-                    TextComponentString lineComponent = new TextComponentString(
-                        TextFormatting.DARK_GRAY + "#" + restoreNumber + " "
-                            + TextFormatting.AQUA + shortHash + TextFormatting.DARK_GRAY + "  "
-                            + TextFormatting.WHITE + messagePreview + " "
-                    );
-
-                    TextComponentString detailsButton = new TextComponentString(TextFormatting.AQUA + "[details]");
-                    detailsButton.getStyle().setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/backup details -hash " + hash));
-                    detailsButton.getStyle().setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
-                        new TextComponentString(TextFormatting.GRAY + "Show compact commit details")));
-                    lineComponent.appendSibling(detailsButton);
-                    sender.sendMessage(lineComponent);
-                } else {
-                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "#" + restoreNumber + " " + logLine));
-                }
-            }
-        } catch (Exception e) {
-            sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to fetch backups."));
         }
     }
 
@@ -428,14 +418,14 @@ public class YuCommand extends CommandBase {
                 String loweredError = errorText.toLowerCase();
                 if ("push".equals(operation) && loweredError.contains("non-fast-forward")) {
                     sendScheduled(server, sender, formatMessage(TextFormatting.YELLOW, "Push was rejected because remote has newer commits."));
-                    sendScheduled(server, sender, formatMessage(TextFormatting.WHITE, "Run /yu pull (or /yu merge), resolve conflicts if needed, then /yu push again."));
-                    sendScheduled(server, sender, formatMessage(TextFormatting.WHITE, "Use /yu push --force only if you want to overwrite remote history."));
+                    sendScheduled(server, sender, plainMessage(TextFormatting.WHITE, "Run /yu pull (or /yu merge), resolve conflicts if needed, then /yu push again."));
+                    sendScheduled(server, sender, plainMessage(TextFormatting.WHITE, "Use /yu push --force only if you want to overwrite remote history."));
                     return;
                 }
 
                 if (("pull".equals(operation) || "merge".equals(operation)) && loweredError.contains("unstaged changes")) {
                     sendScheduled(server, sender, formatMessage(TextFormatting.YELLOW, "Pull blocked by local unstaged changes."));
-                    sendScheduled(server, sender, formatMessage(TextFormatting.WHITE, "Create a backup or reset local state, then retry pull/merge."));
+                    sendScheduled(server, sender, plainMessage(TextFormatting.WHITE, "Create a backup or reset local state, then retry pull/merge."));
                     return;
                 }
 
@@ -445,13 +435,13 @@ public class YuCommand extends CommandBase {
                     } catch (Exception ignored) {
                     }
                     sendScheduled(server, sender, formatMessage(TextFormatting.YELLOW, "Merge hit binary conflicts and was aborted automatically."));
-                    sendScheduled(server, sender, formatMessage(TextFormatting.WHITE, "Use /yu pull (rebase) or /yu push --force depending on which history you want to keep."));
+                    sendScheduled(server, sender, plainMessage(TextFormatting.WHITE, "Use /yu pull (rebase) or /yu push --force depending on which history you want to keep."));
                     return;
                 }
 
                 sendScheduled(server, sender, formatMessage(TextFormatting.RED, errorText));
                 if ("push".equals(operation) && errorText.toLowerCase().contains("src refspec") && errorText.toLowerCase().contains("does not match any")) {
-                    sendScheduled(server, sender, formatMessage(TextFormatting.YELLOW, "No local commit exists yet. Run /backup save first."));
+                    sendScheduled(server, sender, formatMessage(TextFormatting.YELLOW, "No local commit exists yet. Run /yu backup save first."));
                 }
             } catch (Exception e) {
                 clearNetworkBossBar(server, sender, networkBar);
@@ -659,9 +649,9 @@ public class YuCommand extends CommandBase {
             }
 
             sender.sendMessage(formatMessage(TextFormatting.GREEN, "yu init complete. Default branch is " + MAIN_BRANCH + ", world branch is " + worldBranch));
-            sender.sendMessage(formatMessage(TextFormatting.WHITE, "Next: run /backup save -m \"first backup\""));
-            sender.sendMessage(formatMessage(TextFormatting.WHITE, "Optional remote: /yu repo add <url>"));
-            sender.sendMessage(formatMessage(TextFormatting.WHITE, "Then sync with /yu push or /yu pull"));
+            sendPlainLine(sender, TextFormatting.WHITE, "Next: run /yu backup save -m \"first backup\"");
+            sendPlainLine(sender, TextFormatting.WHITE, "Optional remote: /yu repo add <url>");
+            sendPlainLine(sender, TextFormatting.WHITE, "Then sync with /yu push or /yu pull");
         } catch (Exception e) {
             sender.sendMessage(formatMessage(TextFormatting.RED, "yu init failed: " + e.getMessage()));
         }
@@ -1066,7 +1056,15 @@ public class YuCommand extends CommandBase {
     }
 
     private TextComponentString formatMessage(TextFormatting color, String text) {
-        return new TextComponentString(TextFormatting.GOLD + "[yugetGIT] " + color + text);
+        return new TextComponentString(TextFormatting.GOLD + "[yugetGIT]  " + color + text);
+    }
+
+    private TextComponentString plainMessage(TextFormatting color, String text) {
+        return new TextComponentString(color + text);
+    }
+
+    private void sendPlainLine(ICommandSender sender, TextFormatting color, String text) {
+        sender.sendMessage(plainMessage(color, text));
     }
 
     private String shortGitError(GitExecutor.GitResult result) {
@@ -1080,19 +1078,6 @@ public class YuCommand extends CommandBase {
             return result.stdout.trim();
         }
         return "Unknown git error.";
-    }
-
-    private String abbreviate(String text, int maxLength) {
-        if (text == null) {
-            return "";
-        }
-
-        String normalized = text.trim();
-        if (normalized.length() <= maxLength) {
-            return normalized;
-        }
-
-        return normalized.substring(0, Math.max(0, maxLength - 3)) + "...";
     }
 
     private File resolveWorldRepo(MinecraftServer server) {

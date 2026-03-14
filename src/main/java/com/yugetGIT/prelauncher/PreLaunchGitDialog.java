@@ -6,7 +6,6 @@ import com.yugetGIT.core.git.GitBootstrap;
 import javax.swing.JOptionPane;
 import javax.swing.JLabel;
 import javax.swing.ImageIcon;
-import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 import java.awt.Image;
 import java.net.URL;

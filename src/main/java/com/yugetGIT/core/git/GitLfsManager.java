@@ -24,7 +24,7 @@ public final class GitLfsManager {
 
     public static void ensureConfigured(File repoDir) throws Exception {
         if (!StateProperties.isGitLfsAvailable()) {
-            throw new RuntimeException("Git-LFS is not available. Run /backup status and install Git-LFS first.");
+            throw new RuntimeException("Git-LFS is not available. Run /yu backup status and install Git-LFS first.");
         }
 
         GitExecutor.GitResult versionResult = GitExecutor.execute(repoDir, 15, "lfs", "version");

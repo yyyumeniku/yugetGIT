@@ -2,7 +2,7 @@
 
 Use this command to manually open the pre-launch setup dialog while in-game:
 
-`/backup debug-dialog`
+`/yu debug-dialog`
 
 ## What it is for
 - Testing the Git/Git-LFS bootstrap UI.

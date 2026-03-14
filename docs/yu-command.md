@@ -4,7 +4,8 @@
 `/yu help`
 `/yu init`
 `/yu repo add <url>`
-`/yu list`
+`/yu backup <help|save|list|details|restore|worlds|status>`
+`/yu debug-dialog`
 `/yu fetch [remote]`
 `/yu push [--force]`
 `/yu pull`
@@ -25,7 +26,7 @@
     - `.yugetgit/branch-index.md`
   - README branch index entries are clickable links to branch pages on git hosts that render markdown links.
   - Ensures operational repo config.
-  - `/backup save` auto-switches to `world/<world-name>` before committing backup data.
+  - `/yu backup save` auto-switches to `world/<world-name>` before committing backup data.
 
 ## Phase 2 Command
 - `/yu repo add <url>`
@@ -35,8 +36,8 @@
   - Does not create repositories on hosting providers.
 
 ## Phase 2.5 Commands
-- `/yu list`
-  - Shows the recent world backup commits in the same compact style as `/backup list`.
+- `/yu backup list`
+  - Shows the recent world backup commits in the same compact style as `/yu backup list`.
 - `/yu fetch`
   - Runs `git fetch <remote> --prune` (default remote is `origin`).
 
@@ -65,10 +66,10 @@ Push and pull run directly and report the real git success/failure output.
 ## Required Flow
 1. Run `/yu init` after entering world.
 2. (Optional) Run `/yu repo add <url>` when you are ready to attach a remote.
-3. Run backup commands after init (for example `/backup save`).
+3. Run backup commands after init (for example `/yu backup save`).
 4. Use `/yu push` or `/yu pull` for remote sync.
 
-`/backup save` now requires init to be completed first.
+`/yu backup save` now requires init to be completed first.
 
 ## Important Note
 Remote repository creation (GitHub, Forgejo, Gitea, GitLab, etc.) is user-managed.

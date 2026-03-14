@@ -101,9 +101,6 @@ public class WorldSaveHandler {
         if (loadedAt != null && (System.currentTimeMillis() - loadedAt) < AUTO_SAVE_STARTUP_GRACE_MS) {
             return;
         }
-        if (!hasMeaningfulPlayerMovement()) {
-            return;
-        }
         File repoDir = PlatformPaths.getWorldsDir().resolve(worldKey).toFile();
         if (!hasManualBackupInitialized(repoDir)) return;
 
@@ -122,10 +119,6 @@ public class WorldSaveHandler {
         }
 
         WorldServer world = (WorldServer) server.getEntityWorld();
-        if (!hasMeaningfulPlayerMovement()) {
-            exitSaveTriggered.set(false);
-            return;
-        }
         File worldDir = world.getSaveHandler().getWorldDirectory();
         String worldKey = worldDir.getName();
         File repoDir = PlatformPaths.getWorldsDir().resolve(worldKey).toFile();
@@ -216,7 +209,7 @@ public class WorldSaveHandler {
             String lower = msg.toLowerCase();
             boolean important = lower.contains("committed") || lower.contains("failed") || lower.contains("error") || lower.contains("skipped");
             if (important) {
-                server.getPlayerList().sendMessage(new TextComponentString("\u00A76[yugetGIT] \u00A7d" + msg));
+                server.getPlayerList().sendMessage(new TextComponentString("\u00A76[yugetGIT]  \u00A7d" + msg));
             }
         };
         final String trigger = resolveAutoTrigger(message);
