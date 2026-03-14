@@ -2,6 +2,7 @@ package com.yugetGIT;
 
 import com.yugetGIT.yugetgit.Tags;
 import com.yugetGIT.commands.BackupCommand;
+import com.yugetGIT.commands.YuCommand;
 import com.yugetGIT.events.WorldSaveHandler;
 import com.yugetGIT.ui.SaveProgressOverlay;
 import net.minecraftforge.fml.common.Mod;
@@ -36,6 +37,7 @@ public class YugetGITMod {
     @Mod.EventHandler
     public void serverStarting(FMLServerStartingEvent event) {
         event.registerServerCommand(new BackupCommand());
+        event.registerServerCommand(new YuCommand());
     }
 
     @Mod.EventHandler

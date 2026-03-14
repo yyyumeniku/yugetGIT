@@ -17,8 +17,8 @@ Universal flags:
 - `/backup save [-force] -m "message"`
   - Flushes world/chunks and entities, freezes save, stages data, commits backup.
   - Without `-force`, repeated manual saves can be skipped when movement guard is enabled and movement since last manual backup is minimal.
-- `/backup fsave -m "message"`
-  - Shortcut for a forced manual save (`/backup save -force ...`).
+- `/backup save --force -m "message"`
+  - Forces save even when movement guard would skip.
 
 ## Config Toggle
 - `backup.manualSaveMovementGuardEnabled` (default: `true`)

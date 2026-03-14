@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -99,8 +100,97 @@ public class WorldSnapshotStager {
             }
         }
 
+        AuxiliaryStageResult auxiliaryResult = stageAuxiliaryWorldData(worldDir.toPath(), repoDir.toPath().resolve("staging"));
+        changedChunks += auxiliaryResult.changedEntries;
+        bytesWritten += auxiliaryResult.bytesWritten;
+
+        if (listener != null) {
+            listener.onProgress(new StageProgress(90, changedRegions, changedChunks, bytesWritten));
+        }
+
         ChunkTimestamp.save();
         return new StageResult(changedRegions, changedChunks, bytesWritten);
+    }
+
+    private AuxiliaryStageResult stageAuxiliaryWorldData(Path worldPath, Path stagingRoot) throws IOException {
+        int changedEntries = 0;
+        long bytesWritten = 0;
+
+        try (java.util.stream.Stream<Path> stream = Files.walk(worldPath)) {
+            List<Path> paths = new ArrayList<>();
+            stream.forEach(paths::add);
+            for (Path source : paths) {
+                Path relative = worldPath.relativize(source);
+                if (relative.toString().isEmpty()) {
+                    continue;
+                }
+
+                String normalized = relative.toString().replace('\\', '/');
+                if (isExcludedAuxiliaryPath(normalized)) {
+                    continue;
+                }
+
+                Path target = stagingRoot.resolve(relative);
+                if (Files.isDirectory(source)) {
+                    Files.createDirectories(target);
+                    continue;
+                }
+
+                if (copyIfChanged(source, target)) {
+                    changedEntries++;
+                    bytesWritten += Files.size(source);
+                }
+            }
+        }
+
+        return new AuxiliaryStageResult(changedEntries, bytesWritten);
+    }
+
+    private boolean isExcludedAuxiliaryPath(String normalizedRelativePath) {
+        if (normalizedRelativePath.equals("session.lock")) {
+            return true;
+        }
+
+        if (normalizedRelativePath.equals("region") || normalizedRelativePath.startsWith("region/")) {
+            return true;
+        }
+
+        if (normalizedRelativePath.equals("DIM-1/region") || normalizedRelativePath.startsWith("DIM-1/region/")) {
+            return true;
+        }
+
+        if (normalizedRelativePath.equals("DIM1/region") || normalizedRelativePath.startsWith("DIM1/region/")) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean copyIfChanged(Path source, Path target) throws IOException {
+        Files.createDirectories(target.getParent());
+
+        if (Files.exists(target) && Files.isRegularFile(target)) {
+            long sourceSize = Files.size(source);
+            long targetSize = Files.size(target);
+            long sourceMtime = Files.getLastModifiedTime(source).toMillis();
+            long targetMtime = Files.getLastModifiedTime(target).toMillis();
+            if (sourceSize == targetSize && sourceMtime == targetMtime) {
+                return false;
+            }
+        }
+
+        Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+        return true;
+    }
+
+    private static final class AuxiliaryStageResult {
+        private final int changedEntries;
+        private final long bytesWritten;
+
+        private AuxiliaryStageResult(int changedEntries, long bytesWritten) {
+            this.changedEntries = changedEntries;
+            this.bytesWritten = bytesWritten;
+        }
     }
 
     private List<StageEntry> collectRegionEntries(File worldDir, File repoDir) throws IOException {

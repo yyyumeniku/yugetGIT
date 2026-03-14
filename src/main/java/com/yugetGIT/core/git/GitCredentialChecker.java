@@ -10,12 +10,26 @@ public class GitCredentialChecker {
         return checkConfig("user.email");
     }
 
+    public static boolean hasCredentialHelper() {
+        String helper = readConfigValue("credential.helper");
+        return helper != null && !helper.isEmpty();
+    }
+
     private static boolean checkConfig(String key) {
+        String value = readConfigValue(key);
+        return value != null && !value.isEmpty();
+    }
+
+    private static String readConfigValue(String key) {
         try {
             GitExecutor.GitResult result = GitExecutor.execute(null, 5, "config", "--global", key);
-            return result.isSuccess() && !result.stdout.trim().isEmpty();
+            if (!result.isSuccess() || result.stdout == null) {
+                return null;
+            }
+            String value = result.stdout.trim();
+            return value.isEmpty() ? null : value;
         } catch (Exception e) {
-            return false;
+            return null;
         }
     }
 

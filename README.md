@@ -16,12 +16,12 @@ Stage 1:
 - [x] world repository management
 - [x] debug dialog
 - [ ] backup scheduling
-- [ ] git push
-- [ ] git pull
+- [x] git push
+- [x] git pull
 - [ ] git fetch
 - [ ] github repo creation
 
 
 This projects has been able to be succesful because of:
-pcal43 and his mod fastback! (https://github.com/pcal43/fastback)
-Git, Git LFS, and their documentation
+* pcal43 and his mod fastback! (https://github.com/pcal43/fastback)
+* Git, Git LFS, and their documentation

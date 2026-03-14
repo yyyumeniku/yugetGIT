@@ -619,6 +619,28 @@ Use a unified `ParsedArgs` internal parser loop inside `execute` before routing 
 - BossBar text must contain only necessary content and should avoid repeating `[yugetGIT]` prefix spam.
 - For restore flows, show reconnect countdown in BossBar before disconnecting players.
 
+## /yu Command Guide Standard
+The `/yu` command is the mandatory entrypoint before backup commands.
+
+Required `/yu` subcommands:
+- `/yu help`
+- `/yu init`
+- `/yu repo add <url>`
+- `/yu list`
+- `/yu fetch`
+- `/yu push`
+- `/yu pull`
+
+Behavior rules:
+- User must run `/yu init` after entering a world and before running `/backup` operations.
+- Do not use OAuth/token storage in mod code; rely on system git credentials.
+- `init` must initialize local repository state and switch/create a world branch (`world/<worldName>`).
+- `repo add` must set/update local `origin` remote and accept full remote URLs (`https://...` and `git@...`).
+- `list` should mirror the compact backup list output for quick commit browsing.
+- `fetch` should download remote refs without changing local branch state.
+- `push` and `pull` must target the active world branch and report clear success/failure chat lines.
+- Remote repository creation is user-hosted; mod must only configure local git and explain this clearly.
+
 ---
 
 ## Documentation Requirement
