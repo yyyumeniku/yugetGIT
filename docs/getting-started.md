@@ -7,8 +7,9 @@
 
 ## First Backup
 1. Join a world.
-2. Run `/backup save -m "first backup"`.
-3. Run `/backup status` and confirm:
+2. Run `/yu init` to prepare the repository (`main` branch + metadata README/index/icon).
+3. Run `/backup save -m "first backup"`.
+4. Run `/backup status` and confirm:
    - Git Resolved: Yes
    - Git-LFS Available: Yes
    - Repository Built: Yes

@@ -529,6 +529,12 @@ public class BackupCommand extends CommandBase {
             return;
         }
 
+        String worldBranch = buildWorldBranch(worldKey);
+        if (!checkoutOrCreateBranch(repoDir, worldBranch)) {
+            sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to switch to world branch: " + worldBranch));
+            return;
+        }
+
         World senderWorld = sender.getEntityWorld();
         WorldServer activeWorld = senderWorld instanceof WorldServer ? (WorldServer) senderWorld : (WorldServer) server.getEntityWorld();
         if (activeWorld == null) {
@@ -606,6 +612,28 @@ public class BackupCommand extends CommandBase {
             return null;
         }
         return server.getPlayerList().getPlayers().get(0);
+    }
+
+    private boolean checkoutOrCreateBranch(File repoDir, String branchName) {
+        try {
+            if (GitExecutor.execute(repoDir, 15, "checkout", branchName).isSuccess()) {
+                return true;
+            }
+
+            return GitExecutor.execute(repoDir, 15, "checkout", "-b", branchName).isSuccess();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String buildWorldBranch(String worldKey) {
+        String normalized = worldKey == null ? "world" : worldKey.trim().toLowerCase();
+        normalized = normalized.replaceAll("\\s+", "-");
+        normalized = normalized.replaceAll("[^a-z0-9._/-]", "-");
+        if (normalized.isEmpty()) {
+            normalized = "world";
+        }
+        return "world/" + normalized;
     }
 
     private PreparationResult prepareWorldStateForBackup(MinecraftServer server, WorldServer activeWorld, File repoDir) {

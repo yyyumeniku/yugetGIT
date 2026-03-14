@@ -595,6 +595,8 @@ Critical test cases:
 - Place at: .github/copilot-instructions.md
 - VS Code: "github.copilot.chat.codeGeneration.useInstructionFiles": true
 ## Testing Protocol
+After each feature fix or implementation, I must always ask the user whether it works as expected before moving on.
+
 When asking the user to test a feature, ALWAYS ask using the `vscode_askQuestions` tool to show the 'little message that u show for choosing between options' so the user can easily respond from the UI menu (THIS IS ALWAYS AND A NON-NEGOTIABLE).
 
 Also, specify exactly what needs to be tested in the request.
