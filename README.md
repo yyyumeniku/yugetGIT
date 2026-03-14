@@ -11,15 +11,28 @@ Stage 1:
 - [x] git lfs
 - [x] backup saves
 - [x] backup restores
-- [x] backup listing
-- [x] backup deletion
+- [x] backup list
+- [ ] backup pruning
+- [x] backup when exiting the world
 - [x] world repository management
 - [x] debug dialog
 - [ ] backup scheduling
+- [ ] backup pruning based on time and count
+- [ ] backup pruning based on git history graph (delete commits that are no longer ancestors of any branch tips)
 - [x] git push
 - [x] git pull
 - [x] git fetch
+- [x] git merge
+- [x] git rebase
 - [x] github repo creation
+- [x] branch system for new worlds
+- [ ] branching system for existing worlds
+- [ ] automatic fetch on world start (no bossbar just background
+
+
+Stage 2:
+- [ ] Ui in world
+- [ ] Modlist snapshot per commit
 
 
 This projects has been able to be succesful because of:
