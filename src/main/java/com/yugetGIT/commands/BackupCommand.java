@@ -112,19 +112,17 @@ public class BackupCommand extends CommandBase {
         boolean start = false;
         String hash = null;
         String userString = null;
-        List<Integer> extraCounts = new ArrayList<>();
-        List<String> looseTokens = new ArrayList<>();
         boolean valid = true;
         String error = "";
         boolean force = false;
         
-        static ParsedArgs parse(String[] args, boolean strictTokens) {
+        static ParsedArgs parse(String[] args) {
             ParsedArgs p = new ParsedArgs();
             for (int i = 1; i < args.length; i++) {
                 String a = args[i].toLowerCase();
                 if (a.equals("-all")) p.all = true;
                 else if (a.equals("-start")) p.start = true;
-            else if (a.equals("-force") || a.equals("--force")) p.force = true;
+                else if (a.equals("-force") || a.equals("--force")) p.force = true;
                 else if (a.equals("-hash")) {
                     if (i + 1 >= args.length) {
                         p.valid = false;
@@ -165,17 +163,10 @@ public class BackupCommand extends CommandBase {
                         p.error = "Unknown flag: " + a;
                         break;
                     }
-                } else if (strictTokens) {
+                } else {
                     p.valid = false;
                     p.error = "Unexpected argument: " + args[i];
                     break;
-                } else {
-                    try {
-                        int parsedNumber = Integer.parseInt(args[i]);
-                        p.extraCounts.add(parsedNumber);
-                    } catch (Exception ignored) {
-                        p.looseTokens.add(args[i]);
-                    }
                 }
             }
             if (p.all) p.count = Integer.MAX_VALUE;
@@ -195,7 +186,7 @@ public class BackupCommand extends CommandBase {
         File repoDir = com.yugetGIT.util.PlatformPaths.getWorldsDir().resolve(worldKey).toFile();
         
         String sub = args[0].toLowerCase();
-        ParsedArgs parsed = ParsedArgs.parse(args, !"worlds".equals(sub));
+        ParsedArgs parsed = "worlds".equals(sub) ? new ParsedArgs() : ParsedArgs.parse(args);
         if (!parsed.valid) {
             sender.sendMessage(formatMessage(TextFormatting.RED, parsed.error));
             return;
@@ -209,8 +200,9 @@ public class BackupCommand extends CommandBase {
                 sendHelp(sender);
                 break;
             case "save":
-                String saveTitle = parsed.userString != null && !parsed.userString.trim().isEmpty() ? parsed.userString.trim() : "Manual save";
-                boolean hasCustomTitle = parsed.userString != null && !parsed.userString.trim().isEmpty();
+                String customTitle = parsed.userString == null ? "" : parsed.userString.trim();
+                boolean hasCustomTitle = !customTitle.isEmpty();
+                String saveTitle = hasCustomTitle ? customTitle : "Manual save";
                 runManualSave(server, sender, repoDir, worldDir, saveTitle, parsed.force, null, !hasCustomTitle);
                 break;
                 
@@ -319,7 +311,7 @@ public class BackupCommand extends CommandBase {
 
                 String targetRef;
                 if (parsed.hash != null) {
-                    targetRef = parsed.hash.replaceAll("[<>]", "");
+                    targetRef = sanitizeCommitRef(parsed.hash);
                 } else {
                     int requestedNumber = parsed.count;
                     targetRef = buildRestoreRefFromNumber(repoDir, requestedNumber);
@@ -376,7 +368,7 @@ public class BackupCommand extends CommandBase {
     private void showCommitDetails(ICommandSender sender, File repoDir, ParsedArgs parsed) {
         String ref = null;
         if (parsed.hash != null && !parsed.hash.trim().isEmpty()) {
-            ref = parsed.hash.replaceAll("[<>]", "").trim();
+            ref = sanitizeCommitRef(parsed.hash).trim();
         } else if (parsed.count > 0) {
             ref = buildRestoreRefFromNumber(repoDir, parsed.count);
         }
@@ -452,6 +444,13 @@ public class BackupCommand extends CommandBase {
         }
 
         return normalized.substring(0, Math.max(0, maxLength - 3)) + "...";
+    }
+
+    private String sanitizeCommitRef(String rawRef) {
+        if (rawRef == null) {
+            return "";
+        }
+        return rawRef.replace("<", "").replace(">", "");
     }
 
     private void appendRemotePendingCommits(ICommandSender sender, File repoDir, int localCommitCount) {

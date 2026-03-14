@@ -190,7 +190,7 @@ public class YuCommand extends CommandBase {
 
     private void openDebugDialog(ICommandSender sender) {
         sender.sendMessage(formatMessage(TextFormatting.AQUA, "Opening Pre-Launch Dialog on Host OS..."));
-        new Thread(() -> {
+        BackgroundExecutor.execute(() -> {
             try {
                 GitBootstrap.resolveFromPath();
                 boolean gitResolved = GitBootstrap.isGitResolved();
@@ -212,7 +212,7 @@ public class YuCommand extends CommandBase {
             } catch (Exception e) {
                 sender.sendMessage(formatMessage(TextFormatting.RED, "Debug dialog failed: " + e.getMessage()));
             }
-        }, "yugetgit-debug-dialog").start();
+        });
     }
 
     private void runReset(MinecraftServer server, ICommandSender sender, String[] args) {
@@ -450,32 +450,14 @@ public class YuCommand extends CommandBase {
         });
     }
 
-    private boolean ensureRemoteMainBranch(File repoDir, String remoteName) {
-        try {
-            if (!hasBranch(repoDir, MAIN_BRANCH)) {
-                return false;
-            }
-
-            GitExecutor.GitResult hasRemoteMain = GitExecutor.execute(repoDir, 20,
-                "ls-remote", "--exit-code", "--heads", remoteName, MAIN_BRANCH);
-            if (hasRemoteMain.isSuccess()) {
-                return true;
-            }
-
-            GitExecutor.GitResult pushMain = GitExecutor.execute(repoDir, resolveNetworkTimeoutSeconds(),
-                "push", "-u", remoteName, MAIN_BRANCH);
-            return pushMain.isSuccess();
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
     private GitExecutor.GitResult runGitWithProgress(File repoDir, String operation, String branch, boolean forcePush, String remoteName,
                                                      java.util.function.Consumer<ProgressParser.ParseResult> onProgress) throws Exception {
         List<String> cmdArgs = new ArrayList<>();
         String gitExe = GitBootstrap.isGitResolved() ? com.yugetGIT.config.StateProperties.getGitPath() : "git";
+        boolean insecureTlsAllowed = isInsecureTlsAllowed();
+        OsDetector.OS detectedOs = OsDetector.detectOS();
         cmdArgs.add(gitExe);
-        if (isInsecureTlsAllowed()) {
+        if (insecureTlsAllowed) {
             cmdArgs.addAll(Arrays.asList("-c", "http.sslVerify=false"));
         }
 
@@ -504,18 +486,18 @@ public class YuCommand extends CommandBase {
         env.put("GCM_INTERACTIVE", "Never");
         env.put("GIT_ASKPASS", "echo");
         env.put("SSH_ASKPASS", "echo");
-        if (isInsecureTlsAllowed()) {
+        if (insecureTlsAllowed) {
             env.put("GIT_SSL_NO_VERIFY", "1");
         }
 
         File binDir = PlatformPaths.getYugetGITDir().resolve("bin").toFile();
         if (binDir.exists() && binDir.isDirectory()) {
             String currentPath = env.getOrDefault("PATH", "");
-            String pathSeparator = OsDetector.detectOS() == OsDetector.OS.WINDOWS ? ";" : ":";
+            String pathSeparator = detectedOs == OsDetector.OS.WINDOWS ? ";" : ":";
             env.put("PATH", binDir.getAbsolutePath() + pathSeparator + currentPath);
         }
 
-        if (OsDetector.detectOS() == OsDetector.OS.WINDOWS && GitBootstrap.isGitResolved()) {
+        if (detectedOs == OsDetector.OS.WINDOWS && GitBootstrap.isGitResolved()) {
             File gitDir = new File(com.yugetGIT.config.StateProperties.getGitPath()).getParentFile();
             if (gitDir != null && gitDir.getParentFile() != null) {
                 File libexec = new File(gitDir.getParentFile().getParentFile(), "mingw64/libexec/git-core");
@@ -1108,7 +1090,7 @@ public class YuCommand extends CommandBase {
             }
         } catch (Exception ignored) {
         }
-        return "main";
+        return MAIN_BRANCH;
     }
 
     private void sendScheduled(MinecraftServer server, ICommandSender sender, TextComponentString message) {
@@ -1124,16 +1106,7 @@ public class YuCommand extends CommandBase {
             return null;
         }
 
-        String title;
-        if ("push".equals(operation)) {
-            title = "Pushing commits...";
-        } else if ("pull".equals(operation)) {
-            title = "Pulling commits...";
-        } else if ("merge".equals(operation)) {
-            title = "Merging commits...";
-        } else {
-            title = "Fetching commits...";
-        }
+        String title = networkOperationLabel(operation) + "...";
 
         BossInfoServer bar = new BossInfoServer(
             new TextComponentString(TextFormatting.GOLD + title),
@@ -1153,16 +1126,7 @@ public class YuCommand extends CommandBase {
         server.addScheduledTask(() -> {
             float normalized = Math.max(0.0f, Math.min(1.0f, progress.percentage / 100.0f));
             bar.setPercent(normalized);
-            String prefix;
-            if ("fetch".equals(operation)) {
-                prefix = "Fetching commits";
-            } else if ("push".equals(operation)) {
-                prefix = "Pushing commits";
-            } else if ("merge".equals(operation)) {
-                prefix = "Merging commits";
-            } else {
-                prefix = "Pulling commits";
-            }
+            String prefix = networkOperationLabel(operation);
             String details = progress.details == null || progress.details.trim().isEmpty() ? "" : (" | " + progress.details.trim());
             bar.setName(new TextComponentString(TextFormatting.GOLD + prefix + "..." + details));
         });
@@ -1176,19 +1140,23 @@ public class YuCommand extends CommandBase {
         server.addScheduledTask(() -> {
             int bounded = Math.max(0, Math.min(100, percent));
             bar.setPercent(bounded / 100.0f);
-            String prefix;
-            if ("fetch".equals(operation)) {
-                prefix = "Fetching commits";
-            } else if ("push".equals(operation)) {
-                prefix = "Pushing commits";
-            } else if ("merge".equals(operation)) {
-                prefix = "Merging commits";
-            } else {
-                prefix = "Pulling commits";
-            }
+            String prefix = networkOperationLabel(operation);
             String suffix = (details == null || details.trim().isEmpty()) ? "" : (" | " + details.trim());
             bar.setName(new TextComponentString(TextFormatting.GOLD + prefix + "..." + suffix));
         });
+    }
+
+    private String networkOperationLabel(String operation) {
+        if ("fetch".equals(operation)) {
+            return "Fetching commits";
+        }
+        if ("push".equals(operation)) {
+            return "Pushing commits";
+        }
+        if ("merge".equals(operation)) {
+            return "Merging commits";
+        }
+        return "Pulling commits";
     }
 
     private void clearNetworkBossBar(MinecraftServer server, ICommandSender sender, BossInfoServer bar) {
