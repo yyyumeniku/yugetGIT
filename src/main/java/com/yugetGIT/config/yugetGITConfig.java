@@ -32,6 +32,12 @@ public class yugetGITConfig {
 
         @Config.Comment("Allow insecure TLS for /yu network commands (self-signed HTTPS remotes)")
         public boolean allowInsecureTls = false;
+
+        @Config.Comment("Default origin URL automatically applied by /yu init when no remote exists")
+        public String defaultRemoteUrl = "";
+
+        @Config.Comment("Automatically run git fetch --prune on world load and report result in chat")
+        public boolean autoFetchOnWorldStart = false;
     }
 
     @SubscribeEvent

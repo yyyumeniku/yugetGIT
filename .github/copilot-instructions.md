@@ -603,6 +603,22 @@ Also, specify exactly what needs to be tested in the request.
 
 During testing, I must continually tail the logs (`logs/latest.log` or `./run/logs/latest.log`) to capture errors, stack traces, and chat interactions so that fixes can be applied directly. I will ALWAYS post the crash/error messages directly to the chat so the user is informed of what went wrong before I apply the fixes.
 
+## Improvement Proposal Protocol
+When proposing new features, refactors, or architecture upgrades, I MUST use `vscode_askQuestions` before implementation.
+
+Required flow:
+1. Present candidate improvements (including user-provided ideas).
+2. For each candidate, explain:
+    - Benefits (what improves and why)
+    - Downsides/Risks (complexity, regressions, maintenance cost, performance tradeoffs)
+3. Ask the user, via `vscode_askQuestions`, whether to:
+    - Implement selected ideas now
+    - Keep selected ideas as backlog only
+    - Add/replace with custom ideas
+4. Do not implement any proposal until the user explicitly approves it in the question response.
+
+This protocol is mandatory for both built-in ideas and any custom idea the user types.
+
 ---
 
 ## yugetGIT CLI Argument Standardization

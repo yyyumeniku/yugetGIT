@@ -3,8 +3,10 @@ package com.yugetGIT.events;
 import com.yugetGIT.config.StateProperties;
 import com.yugetGIT.config.yugetGITConfig;
 import com.yugetGIT.core.git.CommitBuilder;
+import com.yugetGIT.core.git.GitExecutor;
 import com.yugetGIT.core.git.RepoConfig;
 import com.yugetGIT.YugetGITMod;
+import com.yugetGIT.util.BackgroundExecutor;
 import com.yugetGIT.util.PlatformPaths;
 import com.yugetGIT.util.SaveEventGuard;
 import net.minecraft.world.WorldServer;
@@ -23,6 +25,7 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraftforge.fml.common.FMLCommonHandler;
 import java.util.function.Consumer;
 import net.minecraft.util.text.TextComponentString;
+import net.minecraft.util.text.TextFormatting;
 import com.yugetGIT.util.BlockEntitySnapshotManager;
 import com.yugetGIT.util.EntitySnapshotManager;
 
@@ -49,8 +52,20 @@ public class WorldSaveHandler {
             return;
         }
 
-        File worldDir = ((WorldServer) event.getWorld()).getSaveHandler().getWorldDirectory();
+        WorldServer world = (WorldServer) event.getWorld();
+        File worldDir = world.getSaveHandler().getWorldDirectory();
         worldLoadedAt.put(worldDir.getName(), System.currentTimeMillis());
+
+        if (!StateProperties.isBackupsEnabled() || !yugetGITConfig.gitNetwork.autoFetchOnWorldStart) {
+            return;
+        }
+
+        MinecraftServer server = world.getMinecraftServer();
+        if (server == null) {
+            return;
+        }
+
+        triggerAutoFetchForWorld(server, worldDir);
     }
 
     @SubscribeEvent
@@ -294,5 +309,66 @@ public class WorldSaveHandler {
         lastAutoCommitY = lastSeenPlayerY;
         lastAutoCommitZ = lastSeenPlayerZ;
         hasLastAutoCommitPosition = true;
+    }
+
+    private void triggerAutoFetchForWorld(MinecraftServer server, File worldDir) {
+        String worldKey = worldDir.getName();
+        File repoDir = PlatformPaths.getWorldsDir().resolve(worldKey).toFile();
+        if (!hasManualBackupInitialized(repoDir)) {
+            return;
+        }
+
+        String remoteUrl = getRemoteUrl(repoDir, "origin");
+        if (remoteUrl == null || remoteUrl.trim().isEmpty()) {
+            return;
+        }
+
+        sendServerChat(server, TextFormatting.WHITE, "[FETCH] Auto-fetch started for world " + worldKey + "...");
+        BackgroundExecutor.execute(() -> {
+            try {
+                int timeoutSeconds = Math.max(5, yugetGITConfig.gitNetwork.yuCommandTimeoutSeconds);
+                GitExecutor.GitResult fetchResult = GitExecutor.execute(repoDir, timeoutSeconds, "fetch", "origin", "--prune");
+                if (fetchResult.isSuccess()) {
+                    sendServerChat(server, TextFormatting.GREEN, "[FETCH] Auto-fetch complete for " + worldKey + ".");
+                } else {
+                    sendServerChat(server, TextFormatting.RED, "[FETCH] Auto-fetch failed: " + shortGitError(fetchResult));
+                }
+            } catch (Exception e) {
+                sendServerChat(server, TextFormatting.RED, "[FETCH] Auto-fetch failed: " + e.getMessage());
+            }
+        });
+    }
+
+    private String getRemoteUrl(File repoDir, String remoteName) {
+        try {
+            GitExecutor.GitResult result = GitExecutor.execute(repoDir, 10, "remote", "get-url", remoteName);
+            if (result.isSuccess() && result.stdout != null && !result.stdout.trim().isEmpty()) {
+                return result.stdout.trim();
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private String shortGitError(GitExecutor.GitResult result) {
+        if (result == null) {
+            return "Unknown git error.";
+        }
+        if (result.stderr != null && !result.stderr.trim().isEmpty()) {
+            return result.stderr.trim();
+        }
+        if (result.stdout != null && !result.stdout.trim().isEmpty()) {
+            return result.stdout.trim();
+        }
+        return "Unknown git error.";
+    }
+
+    private void sendServerChat(MinecraftServer server, TextFormatting color, String text) {
+        if (server == null || server.getPlayerList() == null) {
+            return;
+        }
+
+        String line = TextFormatting.GOLD + "[yugetGIT]  " + color + text;
+        server.addScheduledTask(() -> server.getPlayerList().sendMessage(new TextComponentString(line)));
     }
 }

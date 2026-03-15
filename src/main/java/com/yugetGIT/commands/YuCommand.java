@@ -47,6 +47,46 @@ public class YuCommand extends CommandBase {
     private static final String README_FILE = "README.md";
     private final BackupCommand backupCommand = new BackupCommand();
 
+    private static final class ParsedArgs {
+        private String subcommand;
+        private final List<String> positionals = new ArrayList<>();
+        private boolean force;
+        private boolean hard;
+        private boolean valid = true;
+        private String error = "";
+
+        static ParsedArgs parse(String[] args) {
+            ParsedArgs parsed = new ParsedArgs();
+            if (args == null || args.length == 0) {
+                parsed.valid = false;
+                parsed.error = "Unknown /yu usage. Run /yu help.";
+                return parsed;
+            }
+
+            parsed.subcommand = args[0].toLowerCase();
+            for (int i = 1; i < args.length; i++) {
+                String token = args[i];
+                String lowered = token.toLowerCase();
+                if ("--force".equals(lowered)) {
+                    parsed.force = true;
+                    continue;
+                }
+                if ("--hard".equals(lowered)) {
+                    parsed.hard = true;
+                    continue;
+                }
+                if (token.startsWith("-")) {
+                    parsed.valid = false;
+                    parsed.error = "Unknown flag: " + token;
+                    return parsed;
+                }
+                parsed.positionals.add(token);
+            }
+
+            return parsed;
+        }
+    }
+
     @Override
     public String getName() {
         return "yu";
@@ -103,61 +143,74 @@ public class YuCommand extends CommandBase {
             return;
         }
 
-        String sub = args[0].toLowerCase();
+        String rawSub = args[0].toLowerCase();
+        if ("backup".equals(rawSub)) {
+            runBackupSubcommand(server, sender, args);
+            return;
+        }
+
+        ParsedArgs parsed = ParsedArgs.parse(args);
+        if (!parsed.valid) {
+            sender.sendMessage(formatMessage(TextFormatting.RED, parsed.error));
+            return;
+        }
+
+        String sub = parsed.subcommand;
         switch (sub) {
             case "help":
+                if (!parsed.positionals.isEmpty() || parsed.force || parsed.hard) {
+                    sender.sendMessage(formatMessage(TextFormatting.RED, "Invalid /yu help usage. Run /yu help."));
+                    return;
+                }
                 sendHelp(sender);
                 return;
             case "init":
-                if (args.length != 1) {
+                if (!parsed.positionals.isEmpty() || parsed.force || parsed.hard) {
                     sender.sendMessage(formatMessage(TextFormatting.RED, "Invalid /yu init usage. Run /yu help."));
                     return;
                 }
                 runInit(server, sender);
                 return;
             case "repo":
-                runRepo(server, sender, args);
-                return;
-            case "backup":
-                runBackupSubcommand(server, sender, args);
+                runRepo(server, sender, parsed);
                 return;
             case "debug-dialog":
-                if (args.length != 1) {
+                if (!parsed.positionals.isEmpty() || parsed.force || parsed.hard) {
                     sender.sendMessage(formatMessage(TextFormatting.RED, "Invalid /yu debug-dialog usage. Run /yu help."));
                     return;
                 }
                 openDebugDialog(sender);
                 return;
             case "fetch":
-                if (args.length > 2) {
+                if (parsed.force || parsed.hard || parsed.positionals.size() > 1) {
                     sender.sendMessage(formatMessage(TextFormatting.RED, "Invalid /yu fetch usage. Run /yu help."));
                     return;
                 }
-                runNetworkOperation(server, sender, "fetch", false, args.length == 2 ? args[1] : "origin");
+                runNetworkOperation(server, sender, "fetch", false, parsed.positionals.isEmpty() ? "origin" : parsed.positionals.get(0));
                 return;
             case "push":
-                if (args.length > 2 || (args.length == 2 && !"--force".equalsIgnoreCase(args[1]))) {
+                if (parsed.hard || parsed.positionals.size() > 0) {
                     sender.sendMessage(formatMessage(TextFormatting.RED, "Invalid /yu push usage. Run /yu help."));
                     return;
                 }
-                runNetworkOperation(server, sender, "push", args.length == 2, "origin");
+                runNetworkOperation(server, sender, "push", parsed.force, "origin");
                 return;
             case "pull":
-                if (args.length != 1) {
+                if (!parsed.positionals.isEmpty() || parsed.force || parsed.hard) {
                     sender.sendMessage(formatMessage(TextFormatting.RED, "Invalid /yu pull usage. Run /yu help."));
                     return;
                 }
                 runNetworkOperation(server, sender, "pull", false, "origin");
                 return;
             case "merge":
-                if (args.length != 1) {
+                if (!parsed.positionals.isEmpty() || parsed.force || parsed.hard) {
                     sender.sendMessage(formatMessage(TextFormatting.RED, "Invalid /yu merge usage. Run /yu help."));
                     return;
                 }
                 runNetworkOperation(server, sender, "merge", false, "origin");
                 return;
             case "reset":
-                runReset(server, sender, args);
+                runReset(server, sender, parsed);
                 return;
             default:
                 sender.sendMessage(formatMessage(TextFormatting.RED, "Unknown /yu subcommand: " + sub + ". Run /yu help."));
@@ -215,8 +268,8 @@ public class YuCommand extends CommandBase {
         });
     }
 
-    private void runReset(MinecraftServer server, ICommandSender sender, String[] args) {
-        if (args.length != 3 || !"--hard".equalsIgnoreCase(args[1])) {
+    private void runReset(MinecraftServer server, ICommandSender sender, ParsedArgs parsed) {
+        if (!parsed.hard || parsed.positionals.size() != 1 || parsed.force) {
             sender.sendMessage(formatMessage(TextFormatting.RED, "Invalid /yu reset usage. Use /yu reset --hard <ref>."));
             return;
         }
@@ -228,7 +281,7 @@ public class YuCommand extends CommandBase {
             return;
         }
 
-        String targetRef = args[2].trim();
+        String targetRef = parsed.positionals.get(0).trim();
         if (targetRef.isEmpty()) {
             sender.sendMessage(formatMessage(TextFormatting.RED, "Reset ref cannot be empty."));
             return;
@@ -250,13 +303,13 @@ public class YuCommand extends CommandBase {
         }
     }
 
-    private void runRepo(MinecraftServer server, ICommandSender sender, String[] args) {
-        if (args.length < 2 || !"add".equalsIgnoreCase(args[1])) {
+    private void runRepo(MinecraftServer server, ICommandSender sender, ParsedArgs parsed) {
+        if (parsed.force || parsed.hard || parsed.positionals.isEmpty() || !"add".equalsIgnoreCase(parsed.positionals.get(0))) {
             sender.sendMessage(formatMessage(TextFormatting.RED, "Unknown repo command. Run /yu help."));
             return;
         }
 
-        if (args.length < 3) {
+        if (parsed.positionals.size() < 2) {
             sender.sendMessage(formatMessage(TextFormatting.RED, "Missing URL. Usage: /yu repo add <url>"));
             return;
         }
@@ -270,7 +323,7 @@ public class YuCommand extends CommandBase {
             return;
         }
 
-        String remoteUrl = String.join(" ", Arrays.copyOfRange(args, 2, args.length)).trim();
+        String remoteUrl = String.join(" ", parsed.positionals.subList(1, parsed.positionals.size())).trim();
         if (remoteUrl.isEmpty()) {
             sender.sendMessage(formatMessage(TextFormatting.RED, "Remote URL cannot be empty."));
             return;
@@ -384,6 +437,9 @@ public class YuCommand extends CommandBase {
         }
 
         String originUrl = getRemoteUrl(repoDir, remoteName);
+        if ((originUrl == null || originUrl.isEmpty()) && "origin".equals(remoteName)) {
+            originUrl = ensureRemoteConfiguredFromDefault(repoDir, sender, remoteName);
+        }
         if (originUrl == null || originUrl.isEmpty()) {
             sender.sendMessage(formatMessage(TextFormatting.RED, "Remote '" + remoteName + "' not found. Run /yu repo add <url>."));
             return;
@@ -629,6 +685,8 @@ public class YuCommand extends CommandBase {
                 sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to switch/create main branch."));
                 return;
             }
+
+            applyConfiguredDefaultOrigin(repoDir, sender);
 
             sender.sendMessage(formatMessage(TextFormatting.GREEN, "yu init complete. Default branch is " + MAIN_BRANCH + ", world branch is " + worldBranch));
             sendPlainLine(sender, TextFormatting.WHITE, "Next: run /yu backup save -m \"first backup\"");
@@ -1038,7 +1096,7 @@ public class YuCommand extends CommandBase {
     }
 
     private TextComponentString formatMessage(TextFormatting color, String text) {
-        return new TextComponentString(TextFormatting.GOLD + "[yugetGIT]  " + color + text);
+        return new TextComponentString(TextFormatting.GOLD + "[yugetGIT]  " + TextFormatting.GRAY + inferAsciiIcon(text) + color + text);
     }
 
     private TextComponentString plainMessage(TextFormatting color, String text) {
@@ -1207,5 +1265,58 @@ public class YuCommand extends CommandBase {
 
     private boolean isInsecureTlsAllowed() {
         return yugetGITConfig.gitNetwork.allowInsecureTls;
+    }
+
+    private void applyConfiguredDefaultOrigin(File repoDir, ICommandSender sender) {
+        String defaultRemoteUrl = yugetGITConfig.gitNetwork.defaultRemoteUrl == null ? "" : yugetGITConfig.gitNetwork.defaultRemoteUrl.trim();
+        if (defaultRemoteUrl.isEmpty()) {
+            return;
+        }
+
+        try {
+            GitExecutor.GitResult hasOrigin = GitExecutor.execute(repoDir, 10, "remote", "get-url", "origin");
+            if (hasOrigin.isSuccess() && hasOrigin.stdout != null && !hasOrigin.stdout.trim().isEmpty()) {
+                return;
+            }
+
+            String normalizedRemoteUrl = normalizeRemoteUrl(defaultRemoteUrl);
+            GitExecutor.GitResult addResult = GitExecutor.execute(repoDir, 10, "remote", "add", "origin", normalizedRemoteUrl);
+            if (addResult.isSuccess()) {
+                sender.sendMessage(formatMessage(TextFormatting.GREEN, "Default origin remote configured from settings: " + normalizedRemoteUrl));
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private String ensureRemoteConfiguredFromDefault(File repoDir, ICommandSender sender, String remoteName) {
+        if (!"origin".equals(remoteName)) {
+            return null;
+        }
+
+        String defaultRemoteUrl = yugetGITConfig.gitNetwork.defaultRemoteUrl == null ? "" : yugetGITConfig.gitNetwork.defaultRemoteUrl.trim();
+        if (defaultRemoteUrl.isEmpty()) {
+            return null;
+        }
+
+        String normalized = normalizeRemoteUrl(defaultRemoteUrl);
+        try {
+            GitExecutor.GitResult addResult = GitExecutor.execute(repoDir, 10, "remote", "add", "origin", normalized);
+            if (addResult.isSuccess()) {
+                sender.sendMessage(formatMessage(TextFormatting.GREEN, "Auto-configured origin from settings."));
+                return normalized;
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private String inferAsciiIcon(String text) {
+        String lowered = text == null ? "" : text.toLowerCase();
+        if (lowered.contains("push")) return "[PUSH] ";
+        if (lowered.contains("pull") || lowered.contains("fetch") || lowered.contains("merge")) return "[SYNC] ";
+        if (lowered.contains("backup") || lowered.contains("save")) return "[SAVE] ";
+        if (lowered.contains("error") || lowered.contains("failed")) return "[ERR] ";
+        if (lowered.contains("init") || lowered.contains("configured")) return "[GIT] ";
+        return "[INFO] ";
     }
 }

@@ -95,7 +95,7 @@ public class BackupCommand extends CommandBase {
     }
 
     private TextComponentString formatMessage(TextFormatting color, String text) {
-        return new TextComponentString(TextFormatting.GOLD + "[yugetGIT]  " + color + text);
+        return new TextComponentString(TextFormatting.GOLD + "[yugetGIT]  " + TextFormatting.GRAY + inferAsciiIcon(text) + color + text);
     }
 
     private TextComponentString plainMessage(TextFormatting color, String text) {
@@ -453,6 +453,15 @@ public class BackupCommand extends CommandBase {
         return rawRef.replace("<", "").replace(">", "");
     }
 
+    private String inferAsciiIcon(String text) {
+        String lowered = text == null ? "" : text.toLowerCase();
+        if (lowered.contains("backup") || lowered.contains("save")) return "[SAVE] ";
+        if (lowered.contains("restore")) return "[RESTORE] ";
+        if (lowered.contains("details") || lowered.contains("status") || lowered.contains("list")) return "[INFO] ";
+        if (lowered.contains("failed") || lowered.contains("error")) return "[ERR] ";
+        return "[INFO] ";
+    }
+
     private void appendRemotePendingCommits(ICommandSender sender, File repoDir, int localCommitCount) {
         try {
             GitExecutor.GitResult branchResult = GitExecutor.execute(repoDir, 10, "rev-parse", "--abbrev-ref", "HEAD");
@@ -685,7 +694,7 @@ public class BackupCommand extends CommandBase {
             return;
         }
 
-        String formatted = TextFormatting.GOLD + "[yugetGIT]  " + TextFormatting.LIGHT_PURPLE + message;
+        String formatted = TextFormatting.GOLD + "[yugetGIT]  " + TextFormatting.GRAY + inferAsciiIcon(message) + TextFormatting.LIGHT_PURPLE + message;
         if (sender instanceof EntityPlayerMP) {
             EntityPlayerMP player = (EntityPlayerMP) sender;
             if (lower.contains("backup committed")) {
