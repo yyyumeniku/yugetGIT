@@ -670,3 +670,92 @@ Behavior rules:
 ALWAYS create or update documentation mapping when writing complex systems like restoring branches, manipulating chunks, or introducing new commands. This keeps project context clean.
 ALL user-facing command docs and "how to use the mod" docs MUST live under `docs/` as separated, focused markdown files (for example `docs/backup-commands.md`, `docs/getting-started.md`, `docs/debug-dialog.md`).
 Do not put new command/how-to guides at repository root.
+
+# Subagent Instructions
+
+## Agent Role: ORCHESTRATOR ONLY
+
+You are the **orchestrating agent**. You **NEVER** read files or edit code yourself. ALL work is done via subagents.
+
+---
+
+### ⚠️ ABSOLUTE RULES
+
+1. **NEVER read files yourself** — spawn a subagent to do it
+2. **NEVER edit/create code yourself** — spawn a subagent to do it
+3. **ALWAYS use default subagent** — NEVER use `agentName: "Plan"` (omit `agentName` entirely)
+
+---
+
+### Mandatory Workflow (NO EXCEPTIONS)
+```
+User Request
+    ↓
+SUBAGENT #1: Research & Spec
+    - Searches the internet for relevant docs, GitHub issues, Stack Overflow, official references
+    - Reads relevant local files in the codebase
+    - Synthesizes findings into a spec/analysis doc at: docs/SubAgent docs/[NAME].md
+    - Returns summary + spec file path
+    ↓
+YOU: Receive results, spawn next subagent immediately — NO confirmation, NO waiting
+    ↓
+SUBAGENT #2: Implementation (FRESH context)
+    - Receives the spec file path
+    - Implements/codes based on spec
+    - Returns completion summary
+```
+
+---
+
+### runSubagent Tool Usage
+```
+runSubagent(
+  description: "3-5 word summary",  // REQUIRED
+  prompt: "Detailed instructions"   // REQUIRED
+)
+```
+
+**NEVER include `agentName`** — always use default subagent (has full read/write capability).
+
+**If you get errors:**
+- "disabled by user" → You may have included `agentName`. Remove it.
+- "missing required property" → Include BOTH `description` and `prompt`
+
+---
+
+### Subagent Prompt Templates
+
+**Research Subagent:**
+```
+Research [topic].
+Step 1 — Internet research: fetch official docs, GitHub issues, Stack Overflow, and any
+relevant community resources related to [topic]. Summarize key findings.
+Step 2 — Codebase analysis: read all relevant local files related to [topic].
+Step 3 — Write a spec/analysis doc at: docs/SubAgent docs/[NAME].md combining both.
+Return: summary of findings and the spec file path.
+```
+
+**Implementation Subagent:**
+```
+Read the spec at: docs/SubAgent docs/[NAME].md
+Implement according to the spec.
+Return: summary of changes made.
+```
+
+---
+
+### What YOU Do (Orchestrator)
+
+✅ Receive user requests
+✅ Spawn subagents with clear prompts
+✅ Pass spec paths between subagents
+✅ Automatically proceed to implementation after research — never pause to ask
+✅ Run terminal commands
+
+### What YOU DON'T Do
+
+❌ Read files (use subagent)
+❌ Edit/create code (use subagent)
+❌ Use `agentName: "Plan"` (always omit it)
+❌ "Quick look" at files before delegating
+❌ Wait for user confirmation between subagents — research → implement is automatic

@@ -12,7 +12,9 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 public class ChunkExploder {
@@ -56,45 +58,13 @@ public class ChunkExploder {
         }
     }
 
-    public static ExplosionResult explodeRegionFile(Path mcaPath, Path outputDir) throws IOException {
-        if (!Files.exists(mcaPath)) {
+    public static ExplosionResult explodeRegionFile(Path mcaPath, Path outputDir, Set<WorldSnapshotStager.LocalChunkKey> dirtyLocalChunks) throws IOException {
+        if (!Files.exists(mcaPath) || dirtyLocalChunks == null || dirtyLocalChunks.isEmpty()) {
             return new ExplosionResult(false, 0, 0);
         }
 
         File mcaFile = mcaPath.toFile();
         String regionName = mcaFile.getName().replace(".mca", "");
-        String dimensionName = outputDir.getParent() == null ? "overworld" : outputDir.getParent().getFileName().toString();
-        String regionKeyPrefix = dimensionName + "/" + regionName;
-        
-        boolean hasChanges = false;
-        int[] changedTimestamps = new int[1024];
-        int[] currentRegionTimestamps = new int[1024];
-
-        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(mcaFile, "r")) {
-            if (raf.length() < 8192) {
-                return new ExplosionResult(false, 0, 0);
-            }
-            raf.seek(4096);
-            for (int i = 0; i < 1024; i++) {
-                int lastUpdated = raf.readInt();
-                int x = i % 32;
-                int z = i / 32;
-                currentRegionTimestamps[i] = lastUpdated;
-                int currentTimestamp = ChunkTimestamp.get(regionKeyPrefix, x, z);
-                
-                if (lastUpdated > currentTimestamp) {
-                    hasChanges = true;
-                    changedTimestamps[i] = lastUpdated;
-                } else {
-                    changedTimestamps[i] = -1;
-                }
-            }
-        }
-
-        // If no chunks have progressed past our tracked timestamps, simply skip this region file entirely.
-        if (!hasChanges) {
-            return new ExplosionResult(false, 0, 0);
-        }
 
         MCAFile mca = MCAUtil.read(mcaFile, LoadFlags.RAW);
         if (mca == null) {
@@ -108,9 +78,9 @@ public class ChunkExploder {
 
         int writtenChunks = 0;
         long writtenBytes = 0;
-        for (int i = 0; i < 1024; i++) {
-            int x = i % 32;
-            int z = i / 32;
+        for (WorldSnapshotStager.LocalChunkKey dirtyChunk : dirtyLocalChunks) {
+            int x = dirtyChunk.getLocalX();
+            int z = dirtyChunk.getLocalZ();
             Chunk chunk = mca.getChunk(x, z);
             if (chunk == null) {
                 continue;
@@ -118,35 +88,27 @@ public class ChunkExploder {
 
             try {
                 Path chunkOutPath = regionOutDir.resolve("c." + x + "." + z + ".nbt");
-                boolean isChangedChunk = changedTimestamps[i] != -1;
                 boolean baselineMissing = !Files.exists(chunkOutPath);
 
-                // If any chunk in this region changed, keep this region fully reconstructible at this commit.
-                if (isChangedChunk || baselineMissing) {
-                    CompoundTag chunkData = chunk.getHandle();
-                    boolean shouldWrite = baselineMissing;
-                    if (!shouldWrite) {
-                        try {
-                            Object existingTag = NBTUtil.read(chunkOutPath.toFile(), true).getTag();
-                            if (existingTag instanceof CompoundTag) {
-                                shouldWrite = !chunksEquivalent(chunkData, (CompoundTag) existingTag);
-                            } else {
-                                shouldWrite = true;
-                            }
-                        } catch (Exception ignored) {
+                CompoundTag chunkData = chunk.getHandle();
+                boolean shouldWrite = baselineMissing;
+                if (!shouldWrite) {
+                    try {
+                        Object existingTag = NBTUtil.read(chunkOutPath.toFile(), true).getTag();
+                        if (existingTag instanceof CompoundTag) {
+                            shouldWrite = !chunksEquivalent(chunkData, (CompoundTag) existingTag);
+                        } else {
                             shouldWrite = true;
                         }
-                    }
-
-                    if (shouldWrite) {
-                        NBTUtil.write(chunkData, chunkOutPath.toFile(), true);
-                        writtenBytes += Files.size(chunkOutPath);
-                        writtenChunks++;
+                    } catch (Exception ignored) {
+                        shouldWrite = true;
                     }
                 }
 
-                if (currentRegionTimestamps[i] > 0) {
-                    ChunkTimestamp.update(regionKeyPrefix, x, z, currentRegionTimestamps[i]);
+                if (shouldWrite) {
+                    NBTUtil.write(chunkData, chunkOutPath.toFile(), true);
+                    writtenBytes += Files.size(chunkOutPath);
+                    writtenChunks++;
                 }
             } catch (Exception e) {
                 e.printStackTrace();
@@ -206,27 +168,20 @@ public class ChunkExploder {
 
         ListTag<?> leftList = (ListTag<?>) leftSections;
         ListTag<?> rightList = (ListTag<?>) rightSections;
-        if (leftList.size() != rightList.size()) {
+        Map<Byte, CompoundTag> leftByY = mapSectionsByY(leftList);
+        Map<Byte, CompoundTag> rightByY = mapSectionsByY(rightList);
+        if (leftByY.size() != rightByY.size()) {
             return false;
         }
 
-        for (int i = 0; i < leftList.size(); i++) {
-            Object leftSectionObj = leftList.get(i);
-            Object rightSectionObj = rightList.get(i);
-            if (!(leftSectionObj instanceof CompoundTag) || !(rightSectionObj instanceof CompoundTag)) {
-                if (leftSectionObj == null && rightSectionObj == null) {
-                    continue;
-                }
-                if (leftSectionObj == null || rightSectionObj == null || !leftSectionObj.equals(rightSectionObj)) {
-                    return false;
-                }
-                continue;
+        for (Map.Entry<Byte, CompoundTag> leftEntry : leftByY.entrySet()) {
+            CompoundTag leftSection = leftEntry.getValue();
+            CompoundTag rightSection = rightByY.get(leftEntry.getKey());
+            if (rightSection == null) {
+                return false;
             }
 
-            CompoundTag leftSection = (CompoundTag) leftSectionObj;
-            CompoundTag rightSection = (CompoundTag) rightSectionObj;
             for (String sectionKey : COMPARABLE_SECTION_KEYS) {
-
                 Object sectionLeftValue = leftSection.get(sectionKey);
                 Object sectionRightValue = rightSection.get(sectionKey);
                 if (sectionLeftValue == null && sectionRightValue == null) {
@@ -242,6 +197,21 @@ public class ChunkExploder {
         }
 
         return true;
+    }
+
+    private static Map<Byte, CompoundTag> mapSectionsByY(ListTag<?> sectionList) {
+        Map<Byte, CompoundTag> byY = new HashMap<>();
+        for (Object sectionObj : sectionList) {
+            if (!(sectionObj instanceof CompoundTag)) {
+                continue;
+            }
+            CompoundTag section = (CompoundTag) sectionObj;
+            Object yObj = section.get("Y");
+            if (yObj instanceof Number) {
+                byY.put(((Number) yObj).byteValue(), section);
+            }
+        }
+        return byY;
     }
 
     private static boolean isComparableLevelKey(String key) {

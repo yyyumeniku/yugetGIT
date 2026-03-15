@@ -2,6 +2,7 @@ package com.yugetGIT;
 
 import com.yugetGIT.yugetgit.Tags;
 import com.yugetGIT.commands.YuCommand;
+import com.yugetGIT.events.ChunkDirtyTrackerHandler;
 import com.yugetGIT.events.WorldSaveHandler;
 import com.yugetGIT.ui.SaveProgressOverlay;
 import net.minecraftforge.fml.common.Mod;
@@ -28,6 +29,7 @@ public class YugetGITMod {
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
         MinecraftForge.EVENT_BUS.register(worldSaveHandler);
+        MinecraftForge.EVENT_BUS.register(new ChunkDirtyTrackerHandler());
         if (FMLCommonHandler.instance().getSide().isClient()) {
             MinecraftForge.EVENT_BUS.register(new SaveProgressOverlay());
         }

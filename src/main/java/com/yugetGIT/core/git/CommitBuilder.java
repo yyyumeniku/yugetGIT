@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import com.yugetGIT.util.BackgroundExecutor;
 import com.yugetGIT.util.SaveProgressTracker;
+import com.yugetGIT.core.mca.DirtyChunkIndex;
 import com.yugetGIT.core.mca.WorldSnapshotStager;
 import java.util.function.Consumer;
 
@@ -115,6 +116,7 @@ public class CommitBuilder {
         }
 
         BackgroundExecutor.execute(() -> {
+            String worldKey = worldDir == null ? null : worldDir.getName();
             try {
                 WorldSnapshotStager stager = new WorldSnapshotStager();
                 feedback.accept("Scanning region changes...");
@@ -131,11 +133,17 @@ public class CommitBuilder {
                         progress.accept(new ProgressSnapshot("Idle", 100, 0, 0));
                     }
                     feedback.accept("No changed chunks found.");
+                    if (worldKey != null) {
+                        DirtyChunkIndex.clearWorld(worldKey);
+                    }
                     SaveProgressTracker.finish(true, "No changed chunks found.");
                     return;
                 }
 
-                feedback.accept("Staged " + stageResult.getChangedChunks() + " chunks from " + stageResult.getChangedRegions() + " regions.");
+                feedback.accept(
+                    "Staged " + stageResult.getChangedChunks() + " chunks from " + stageResult.getChangedRegions()
+                        + " regions and " + stageResult.getChangedAuxiliaryEntries() + " auxiliary files."
+                );
                 if (progress != null) {
                     progress.accept(new ProgressSnapshot("Indexing", 90, stageResult.getChangedChunks(), stageResult.getBytesWritten()));
                 }
@@ -166,6 +174,9 @@ public class CommitBuilder {
                         progress.accept(new ProgressSnapshot("Idle", 100, stageResult.getChangedChunks(), stageResult.getBytesWritten()));
                     }
                     feedback.accept("No meaningful file changes to commit.");
+                    if (worldKey != null) {
+                        DirtyChunkIndex.clearWorld(worldKey);
+                    }
                     SaveProgressTracker.finish(true, "No new changes.");
                     return;
                 }
@@ -194,6 +205,9 @@ public class CommitBuilder {
                 if (commitResult.isSuccess()) {
                     double backupSizeMb = stageResult.getBytesWritten() / (1024.0 * 1024.0);
                     feedback.accept(String.format("Backup committed (%.2f MB)", backupSizeMb));
+                    if (worldKey != null) {
+                        DirtyChunkIndex.clearWorld(worldKey);
+                    }
                     if (progress != null) {
                         progress.accept(new ProgressSnapshot("Committed", 100, stageResult.getChangedChunks(), stageResult.getBytesWritten()));
                     }
@@ -204,6 +218,9 @@ public class CommitBuilder {
                         progress.accept(new ProgressSnapshot("Idle", 100, stageResult.getChangedChunks(), stageResult.getBytesWritten()));
                     }
                     feedback.accept("No new changes since last backup.");
+                    if (worldKey != null) {
+                        DirtyChunkIndex.clearWorld(worldKey);
+                    }
                     SaveProgressTracker.finish(true, "No new changes.");
                 } else {
                     if (progress != null) {

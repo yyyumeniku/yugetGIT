@@ -803,7 +803,6 @@ public class BackupCommand extends CommandBase {
                 }
 
                 int rebuiltRegions = assembleRegionsFromStaging(repoDir, worldDir);
-                com.yugetGIT.core.mca.ChunkTimestamp.clearAll();
                 server.addScheduledTask(() -> {
                     try {
                         int restoredEntities = EntitySnapshotManager.apply(server, repoDir);

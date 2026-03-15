@@ -5,6 +5,7 @@ import com.yugetGIT.config.yugetGITConfig;
 import com.yugetGIT.core.git.CommitBuilder;
 import com.yugetGIT.core.git.GitExecutor;
 import com.yugetGIT.core.git.RepoConfig;
+import com.yugetGIT.core.mca.DirtyChunkIndex;
 import com.yugetGIT.YugetGITMod;
 import com.yugetGIT.util.BackgroundExecutor;
 import com.yugetGIT.util.PlatformPaths;
@@ -62,6 +63,7 @@ public class WorldSaveHandler {
         File worldDir = world.getSaveHandler().getWorldDirectory();
         String worldKey = worldDir.getName();
         worldLoadedAt.put(worldKey, System.currentTimeMillis());
+        DirtyChunkIndex.clearWorld(worldKey);
         autoFetchTriggeredWorlds.remove(worldKey);
 
         if (!StateProperties.isBackupsEnabled() || !yugetGITConfig.gitNetwork.autoFetchOnWorldStart) {
@@ -71,6 +73,24 @@ public class WorldSaveHandler {
         if (autoFetchTriggeredWorlds.add(worldKey)) {
             pendingAutoFetchWorlds.add(worldKey);
         }
+    }
+
+    @SubscribeEvent
+    public void onWorldUnload(WorldEvent.Unload event) {
+        if (event.getWorld().isRemote || !(event.getWorld() instanceof WorldServer)) {
+            return;
+        }
+
+        WorldServer world = (WorldServer) event.getWorld();
+        if (world.provider.getDimension() != 0) {
+            return;
+        }
+
+        String worldKey = world.getSaveHandler().getWorldDirectory().getName();
+        DirtyChunkIndex.clearWorld(worldKey);
+        worldLoadedAt.remove(worldKey);
+        pendingAutoFetchWorlds.remove(worldKey);
+        autoFetchTriggeredWorlds.remove(worldKey);
     }
 
     @SubscribeEvent

@@ -23,6 +23,12 @@ public class yugetGITConfig {
 
         @Config.Comment("When true, /yu backup save skips if player movement since last manual backup is minimal. Use /yu backup save --force to force.")
         public boolean manualSaveMovementGuardEnabled = true;
+
+        @Config.Comment("Track naturally occurring crop growth as dirty chunk changes for backups")
+        public boolean trackCropGrowthChanges = true;
+
+        @Config.Comment("Ignore block state toggles that are often interaction noise (doors, buttons, pressure plates, trapdoors, fence gates)")
+        public boolean ignoreInteractiveStateToggles = true;
     }
 
     public static class GitNetworkSettings {

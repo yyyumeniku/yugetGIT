@@ -6,7 +6,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public class WorldSnapshotStager {
 
@@ -18,12 +23,14 @@ public class WorldSnapshotStager {
         private final int percent;
         private final int changedRegions;
         private final int changedChunks;
+        private final int changedAuxiliaryEntries;
         private final long bytesWritten;
 
-        public StageProgress(int percent, int changedRegions, int changedChunks, long bytesWritten) {
+        public StageProgress(int percent, int changedRegions, int changedChunks, int changedAuxiliaryEntries, long bytesWritten) {
             this.percent = percent;
             this.changedRegions = changedRegions;
             this.changedChunks = changedChunks;
+            this.changedAuxiliaryEntries = changedAuxiliaryEntries;
             this.bytesWritten = bytesWritten;
         }
 
@@ -39,6 +46,10 @@ public class WorldSnapshotStager {
             return changedChunks;
         }
 
+        public int getChangedAuxiliaryEntries() {
+            return changedAuxiliaryEntries;
+        }
+
         public long getBytesWritten() {
             return bytesWritten;
         }
@@ -47,11 +58,13 @@ public class WorldSnapshotStager {
     public static final class StageResult {
         private final int changedRegions;
         private final int changedChunks;
+        private final int changedAuxiliaryEntries;
         private final long bytesWritten;
 
-        public StageResult(int changedRegions, int changedChunks, long bytesWritten) {
+        public StageResult(int changedRegions, int changedChunks, int changedAuxiliaryEntries, long bytesWritten) {
             this.changedRegions = changedRegions;
             this.changedChunks = changedChunks;
+            this.changedAuxiliaryEntries = changedAuxiliaryEntries;
             this.bytesWritten = bytesWritten;
         }
 
@@ -63,12 +76,16 @@ public class WorldSnapshotStager {
             return changedChunks;
         }
 
+        public int getChangedAuxiliaryEntries() {
+            return changedAuxiliaryEntries;
+        }
+
         public long getBytesWritten() {
             return bytesWritten;
         }
 
         public boolean hasChanges() {
-            return changedChunks > 0;
+            return changedChunks > 0 || changedAuxiliaryEntries > 0;
         }
     }
 
@@ -77,17 +94,18 @@ public class WorldSnapshotStager {
     }
 
     public StageResult stageWorld(File worldDir, File repoDir, StageProgressListener listener) throws IOException {
-        ChunkTimestamp.init(repoDir);
-
         int changedRegions = 0;
         int changedChunks = 0;
+        int changedAuxiliaryEntries = 0;
         long bytesWritten = 0;
 
-        List<StageEntry> entries = collectRegionEntries(worldDir, repoDir);
+        String worldKey = worldDir.getName();
+        Set<DirtyChunkIndex.ChunkKey> dirtyChunks = DirtyChunkIndex.snapshotWorld(worldKey);
+        List<StageEntry> entries = collectRegionEntries(worldDir, repoDir, dirtyChunks);
         int totalEntries = entries.size();
         for (int index = 0; index < totalEntries; index++) {
             StageEntry entry = entries.get(index);
-            ChunkExploder.ExplosionResult result = ChunkExploder.explodeRegionFile(entry.regionFile, entry.stagingRegionDir);
+            ChunkExploder.ExplosionResult result = ChunkExploder.explodeRegionFile(entry.regionFile, entry.stagingRegionDir, entry.dirtyLocalChunks);
             if (result.hasChanges()) {
                 changedRegions++;
                 changedChunks += result.getChunkCount();
@@ -96,20 +114,19 @@ public class WorldSnapshotStager {
 
             if (listener != null) {
                 int percent = totalEntries == 0 ? 80 : Math.max(1, (index + 1) * 80 / totalEntries);
-                listener.onProgress(new StageProgress(percent, changedRegions, changedChunks, bytesWritten));
+                listener.onProgress(new StageProgress(percent, changedRegions, changedChunks, changedAuxiliaryEntries, bytesWritten));
             }
         }
 
         AuxiliaryStageResult auxiliaryResult = stageAuxiliaryWorldData(worldDir.toPath(), repoDir.toPath().resolve("staging"));
-        changedChunks += auxiliaryResult.changedEntries;
+        changedAuxiliaryEntries += auxiliaryResult.changedEntries;
         bytesWritten += auxiliaryResult.bytesWritten;
 
         if (listener != null) {
-            listener.onProgress(new StageProgress(90, changedRegions, changedChunks, bytesWritten));
+            listener.onProgress(new StageProgress(90, changedRegions, changedChunks, changedAuxiliaryEntries, bytesWritten));
         }
 
-        ChunkTimestamp.save();
-        return new StageResult(changedRegions, changedChunks, bytesWritten);
+        return new StageResult(changedRegions, changedChunks, changedAuxiliaryEntries, bytesWritten);
     }
 
     private AuxiliaryStageResult stageAuxiliaryWorldData(Path worldPath, Path stagingRoot) throws IOException {
@@ -193,51 +210,64 @@ public class WorldSnapshotStager {
         }
     }
 
-    private List<StageEntry> collectRegionEntries(File worldDir, File repoDir) throws IOException {
-        List<StageEntry> entries = new ArrayList<>();
-        for (DimensionRegionMapping mapping : buildMappings(worldDir, repoDir)) {
-            if (!Files.exists(mapping.sourceRegionDir) || !Files.isDirectory(mapping.sourceRegionDir)) {
-                continue;
-            }
-
-            Files.createDirectories(mapping.stagingRegionDir);
-            for (Path regionFile : listRegionFiles(mapping.sourceRegionDir)) {
-                entries.add(new StageEntry(regionFile, mapping.stagingRegionDir));
-            }
+    private List<StageEntry> collectRegionEntries(File worldDir, File repoDir, Set<DirtyChunkIndex.ChunkKey> dirtyChunks) throws IOException {
+        if (dirtyChunks == null || dirtyChunks.isEmpty()) {
+            return Collections.emptyList();
         }
-        return entries;
-    }
 
-    private List<Path> listRegionFiles(Path regionDir) throws IOException {
-        List<Path> paths = new ArrayList<>();
-        try (java.util.stream.Stream<Path> stream = Files.list(regionDir)) {
-            stream.filter(Files::isRegularFile)
-                .filter(path -> path.getFileName().toString().startsWith("r."))
-                .filter(path -> path.getFileName().toString().endsWith(".mca"))
-                .forEach(paths::add);
-        }
-        return paths;
-    }
-
-    private List<DimensionRegionMapping> buildMappings(File worldDir, File repoDir) {
         Path worldPath = worldDir.toPath();
         Path stagingRoot = repoDir.toPath().resolve("staging");
 
-        List<DimensionRegionMapping> mappings = new ArrayList<>();
-        mappings.add(new DimensionRegionMapping(
-            worldPath.resolve("region"),
-            stagingRoot.resolve("overworld").resolve("region")
-        ));
-        mappings.add(new DimensionRegionMapping(
-            worldPath.resolve("DIM-1").resolve("region"),
-            stagingRoot.resolve("DIM-1").resolve("region")
-        ));
-        mappings.add(new DimensionRegionMapping(
-            worldPath.resolve("DIM1").resolve("region"),
-            stagingRoot.resolve("DIM1").resolve("region")
-        ));
+        Map<String, StageEntry> byRegionPath = new HashMap<>();
+        for (DirtyChunkIndex.ChunkKey dirtyChunk : dirtyChunks) {
+            DimensionRegionMapping mapping = mapDimension(worldPath, stagingRoot, dirtyChunk.getDimensionId());
+            if (mapping == null) {
+                continue;
+            }
 
-        return mappings;
+            int regionX = Math.floorDiv(dirtyChunk.getChunkX(), 32);
+            int regionZ = Math.floorDiv(dirtyChunk.getChunkZ(), 32);
+            int localX = Math.floorMod(dirtyChunk.getChunkX(), 32);
+            int localZ = Math.floorMod(dirtyChunk.getChunkZ(), 32);
+
+            Path regionFile = mapping.sourceRegionDir.resolve("r." + regionX + "." + regionZ + ".mca");
+            if (!Files.exists(regionFile) || !Files.isRegularFile(regionFile)) {
+                continue;
+            }
+
+            String key = regionFile.toAbsolutePath().normalize().toString();
+            StageEntry entry = byRegionPath.get(key);
+            if (entry == null) {
+                Files.createDirectories(mapping.stagingRegionDir);
+                entry = new StageEntry(regionFile, mapping.stagingRegionDir);
+                byRegionPath.put(key, entry);
+            }
+            entry.dirtyLocalChunks.add(new LocalChunkKey(localX, localZ));
+        }
+
+        return new ArrayList<>(byRegionPath.values());
+    }
+
+    private DimensionRegionMapping mapDimension(Path worldPath, Path stagingRoot, int dimensionId) {
+        if (dimensionId == 0) {
+            return new DimensionRegionMapping(
+                worldPath.resolve("region"),
+                stagingRoot.resolve("overworld").resolve("region")
+            );
+        }
+        if (dimensionId == -1) {
+            return new DimensionRegionMapping(
+                worldPath.resolve("DIM-1").resolve("region"),
+                stagingRoot.resolve("DIM-1").resolve("region")
+            );
+        }
+        if (dimensionId == 1) {
+            return new DimensionRegionMapping(
+                worldPath.resolve("DIM1").resolve("region"),
+                stagingRoot.resolve("DIM1").resolve("region")
+            );
+        }
+        return null;
     }
 
     private static final class DimensionRegionMapping {
@@ -253,10 +283,48 @@ public class WorldSnapshotStager {
     private static final class StageEntry {
         private final Path regionFile;
         private final Path stagingRegionDir;
+        private final Set<LocalChunkKey> dirtyLocalChunks = new HashSet<>();
 
         private StageEntry(Path regionFile, Path stagingRegionDir) {
             this.regionFile = regionFile;
             this.stagingRegionDir = stagingRegionDir;
+        }
+    }
+
+    public static final class LocalChunkKey {
+        private final int localX;
+        private final int localZ;
+
+        public LocalChunkKey(int localX, int localZ) {
+            this.localX = localX;
+            this.localZ = localZ;
+        }
+
+        public int getLocalX() {
+            return localX;
+        }
+
+        public int getLocalZ() {
+            return localZ;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj) {
+                return true;
+            }
+            if (!(obj instanceof LocalChunkKey)) {
+                return false;
+            }
+            LocalChunkKey other = (LocalChunkKey) obj;
+            return localX == other.localX && localZ == other.localZ;
+        }
+
+        @Override
+        public int hashCode() {
+            int result = localX;
+            result = 31 * result + localZ;
+            return result;
         }
     }
 }
