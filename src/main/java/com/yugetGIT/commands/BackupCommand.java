@@ -387,39 +387,40 @@ public class BackupCommand extends CommandBase {
             String shortHash = hash.length() > 10 ? hash.substring(0, 10) : hash;
 
             sender.sendMessage(formatMessage(TextFormatting.AQUA, "Commit " + shortHash));
-            sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- title: " + TextFormatting.WHITE + subject));
-            sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- author: " + TextFormatting.WHITE + author));
-            sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- date: " + TextFormatting.WHITE + committedAt));
+            List<String> detailLines = new ArrayList<>();
+            detailLines.add("title: " + subject);
+            detailLines.add("author: " + author);
+            detailLines.add("date: " + committedAt);
+
             if (!body.isEmpty()) {
                 String[] bodyLines = body.split("\n");
                 Matcher detailMatcher = DETAIL_PATTERN.matcher(bodyLines[0].trim());
                 if (detailMatcher.matches()) {
-                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- stats: " + TextFormatting.WHITE + detailMatcher.group(1)));
-                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- world: " + TextFormatting.WHITE + detailMatcher.group(2)));
-                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- chunks: " + TextFormatting.WHITE + detailMatcher.group(3)));
-                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + "|- players: " + TextFormatting.WHITE + detailMatcher.group(4)));
-                    boolean hasExtraLines = bodyLines.length > 1;
-                    String whenPrefix = hasExtraLines ? "|- at: " : "`- at: ";
-                    sender.sendMessage(new TextComponentString(TextFormatting.GRAY + whenPrefix + TextFormatting.WHITE + detailMatcher.group(5)));
+                    detailLines.add("stats: " + detailMatcher.group(1));
+                    detailLines.add("world: " + detailMatcher.group(2));
+                    detailLines.add("chunks: " + detailMatcher.group(3));
+                    detailLines.add("players: " + detailMatcher.group(4));
+                    detailLines.add("at: " + detailMatcher.group(5));
 
                     for (int i = 1; i < bodyLines.length; i++) {
                         String extra = bodyLines[i].trim();
-                        if (extra.isEmpty()) {
-                            continue;
+                        if (!extra.isEmpty()) {
+                            detailLines.add(extra);
                         }
-                        String branch = (i == bodyLines.length - 1) ? "`- " : "|- ";
-                        sender.sendMessage(new TextComponentString(TextFormatting.GRAY + branch + TextFormatting.WHITE + extra));
                     }
                 } else {
-                    for (int i = 0; i < bodyLines.length; i++) {
-                        String bodyLine = bodyLines[i].trim();
-                        if (bodyLine.isEmpty()) {
-                            continue;
+                    for (String bodyLine : bodyLines) {
+                        String trimmed = bodyLine == null ? "" : bodyLine.trim();
+                        if (!trimmed.isEmpty()) {
+                            detailLines.add(trimmed);
                         }
-                        String branch = (i == bodyLines.length - 1) ? "`- " : "|- ";
-                        sender.sendMessage(new TextComponentString(TextFormatting.GRAY + branch + TextFormatting.WHITE + bodyLine));
                     }
                 }
+            }
+
+            for (int i = 0; i < detailLines.size(); i++) {
+                String branch = (i == detailLines.size() - 1) ? "`- " : "|- ";
+                sender.sendMessage(new TextComponentString(TextFormatting.GRAY + branch + TextFormatting.WHITE + detailLines.get(i)));
             }
         } catch (Exception e) {
             sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to read commit details: " + e.getMessage()));

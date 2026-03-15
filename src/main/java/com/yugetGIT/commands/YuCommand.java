@@ -244,7 +244,7 @@ public class YuCommand extends CommandBase {
     }
 
     private void openDebugDialog(ICommandSender sender) {
-        sender.sendMessage(formatMessage(TextFormatting.AQUA, "Opening Pre-Launch Dialog on Host OS..."));
+        sender.sendMessage(formatMessage(TextFormatting.AQUA, "Opening debug dialog"));
         BackgroundExecutor.execute(() -> {
             try {
                 GitBootstrap.resolveFromPath();
@@ -277,9 +277,7 @@ public class YuCommand extends CommandBase {
         }
 
         File repoDir = resolveWorldRepo(server);
-        File gitDir = new File(repoDir, ".git");
-        if (!gitDir.exists()) {
-            sender.sendMessage(formatMessage(TextFormatting.RED, "Run /yu init first."));
+        if (!ensureInitializedRepo(repoDir, sender, "Run /yu init first.")) {
             return;
         }
 
@@ -316,12 +314,9 @@ public class YuCommand extends CommandBase {
             return;
         }
 
-        File worldDir = server.getEntityWorld().getSaveHandler().getWorldDirectory();
-        String worldKey = worldDir.getName();
-        File repoDir = PlatformPaths.getWorldsDir().resolve(worldKey).toFile();
-        File gitDir = new File(repoDir, ".git");
-        if (!gitDir.exists()) {
-            sender.sendMessage(formatMessage(TextFormatting.RED, "Run /yu init first before adding a remote."));
+        String worldKey = resolveWorldKey(server);
+        File repoDir = resolveWorldRepo(server);
+        if (!ensureInitializedRepo(repoDir, sender, "Run /yu init first before adding a remote.")) {
             return;
         }
 
@@ -338,9 +333,9 @@ public class YuCommand extends CommandBase {
         }
 
         try {
-            GitExecutor.GitResult hasOrigin = GitExecutor.execute(repoDir, 10, "remote", "get-url", "origin");
+            String existingOrigin = getRemoteUrl(repoDir, "origin");
             GitExecutor.GitResult setResult;
-            if (hasOrigin.isSuccess()) {
+            if (existingOrigin != null && !existingOrigin.isEmpty()) {
                 setResult = GitExecutor.execute(repoDir, 10, "remote", "set-url", "origin", normalizedRemoteUrl);
             } else {
                 setResult = GitExecutor.execute(repoDir, 10, "remote", "add", "origin", normalizedRemoteUrl);
@@ -354,10 +349,7 @@ public class YuCommand extends CommandBase {
 
             String worldBranch = buildWorldBranch(worldKey);
             refreshMainMetadataAfterRemoteAdd(repoDir, worldBranch, sender);
-            GitExecutor.GitResult mainPushResult = pushMainBranchToOrigin(repoDir);
-            if (!mainPushResult.isSuccess()) {
-                sender.sendMessage(formatMessage(TextFormatting.YELLOW, "Main branch push skipped: " + shortGitError(mainPushResult)));
-            }
+            pushMainBranchToOrigin(repoDir);
 
             if (checkoutOrCreateBranch(repoDir, worldBranch)) {
                 sender.sendMessage(formatMessage(TextFormatting.GREEN, "Remote added. Run /yu push to sync."));
@@ -428,9 +420,7 @@ public class YuCommand extends CommandBase {
 
     private void runNetworkOperation(MinecraftServer server, ICommandSender sender, String operation, boolean forcePush, String remoteName) {
         File repoDir = resolveWorldRepo(server);
-        File gitDir = new File(repoDir, ".git");
-        if (!gitDir.exists()) {
-            sender.sendMessage(formatMessage(TextFormatting.RED, "Run /yu init first."));
+        if (!ensureInitializedRepo(repoDir, sender, "Run /yu init first.")) {
             return;
         }
 
@@ -654,9 +644,8 @@ public class YuCommand extends CommandBase {
     }
 
     private void runInit(MinecraftServer server, ICommandSender sender) {
-        File worldDir = server.getEntityWorld().getSaveHandler().getWorldDirectory();
-        String worldKey = worldDir.getName();
-        File repoDir = PlatformPaths.getWorldsDir().resolve(worldKey).toFile();
+        String worldKey = resolveWorldKey(server);
+        File repoDir = resolveWorldRepo(server);
         sendScheduled(server, sender, formatMessage(TextFormatting.WHITE, "Initializing repository..."));
         BackgroundExecutor.execute(() -> {
             try {
@@ -695,17 +684,11 @@ public class YuCommand extends CommandBase {
                     initializeWorldBranchWithoutMetadata(repoDir, worldBranch);
                 }
 
-                if (!checkoutOrCreateBranch(repoDir, MAIN_BRANCH)) {
-                    sendScheduled(server, sender, formatMessage(TextFormatting.RED, "Failed to switch/create main branch."));
-                    return;
-                }
-
                 applyConfiguredDefaultOrigin(repoDir);
-                if (!ensureMainBranchCommitted(repoDir)) {
+                if (!ensureMainBranchReady(repoDir)) {
                     sendScheduled(server, sender, formatMessage(TextFormatting.RED, "Failed to finalize main branch commit."));
                     return;
                 }
-                checkoutOrCreateBranch(repoDir, MAIN_BRANCH);
 
                 String originUrl = getRemoteUrl(repoDir, "origin");
                 sendScheduled(server, sender, formatMessage(TextFormatting.WHITE, "Init complete."));
@@ -723,19 +706,16 @@ public class YuCommand extends CommandBase {
 
     private boolean checkoutOrCreateBranch(File repoDir, String branchName) {
         try {
-            if (com.yugetGIT.core.git.GitExecutor.execute(repoDir, 15, "checkout", branchName).isSuccess()) {
+            if (GitExecutor.execute(repoDir, 15, "checkout", branchName).isSuccess()) {
                 return true;
             }
 
-            if (com.yugetGIT.core.git.GitExecutor.execute(repoDir, 15, "checkout", "-b", branchName).isSuccess()) {
+            if (GitExecutor.execute(repoDir, 15, "checkout", "-b", branchName).isSuccess()) {
                 return true;
             }
 
-            if (com.yugetGIT.core.git.GitExecutor.execute(repoDir, 15, "checkout", "--orphan", branchName).isSuccess()) {
-                return true;
-            }
-
-            return branchName.equals(resolveCurrentBranch(repoDir));
+            return hasBranch(repoDir, branchName)
+                && GitExecutor.execute(repoDir, 15, "checkout", branchName).isSuccess();
         } catch (Exception e) {
             return false;
         }
@@ -831,7 +811,11 @@ public class YuCommand extends CommandBase {
 
     private boolean ensureMainBranchCommitted(File repoDir) {
         try {
-            if (!checkoutOrCreateBranch(repoDir, MAIN_BRANCH)) {
+            if (!hasBranch(repoDir, MAIN_BRANCH)) {
+                if (!GitExecutor.execute(repoDir, 15, "checkout", "--orphan", MAIN_BRANCH).isSuccess()) {
+                    return false;
+                }
+            } else if (!checkoutOrCreateBranch(repoDir, MAIN_BRANCH)) {
                 return false;
             }
 
@@ -850,6 +834,12 @@ public class YuCommand extends CommandBase {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private boolean ensureMainBranchReady(File repoDir) {
+        return checkoutOrCreateBranch(repoDir, MAIN_BRANCH)
+            && ensureMainBranchCommitted(repoDir)
+            && MAIN_BRANCH.equals(resolveCurrentBranch(repoDir));
     }
 
     private void initializeWorldBranchWithoutMetadata(File repoDir, String worldBranch) {
@@ -1065,18 +1055,21 @@ public class YuCommand extends CommandBase {
     }
 
     private File resolveWorldRepo(MinecraftServer server) {
-        File worldDir = server.getEntityWorld().getSaveHandler().getWorldDirectory();
-        String worldKey = worldDir.getName();
-        return PlatformPaths.getWorldsDir().resolve(worldKey).toFile();
+        return PlatformPaths.getWorldsDir().resolve(resolveWorldKey(server)).toFile();
+    }
+
+    private String resolveWorldKey(MinecraftServer server) {
+        return server.getEntityWorld().getSaveHandler().getWorldDirectory().getName();
+    }
+
+    private String resolveWorldBranch(MinecraftServer server) {
+        return buildWorldBranch(resolveWorldKey(server));
     }
 
     private GitExecutor.GitResult pushMainBranchToOrigin(File repoDir) {
         try {
-            if (!checkoutOrCreateBranch(repoDir, MAIN_BRANCH)) {
-                return new GitExecutor.GitResult(1, "", "failed to checkout main branch");
-            }
-            if (!ensureMainBranchCommitted(repoDir)) {
-                return new GitExecutor.GitResult(1, "", "failed to ensure main branch commit");
+            if (!ensureMainBranchReady(repoDir)) {
+                return new GitExecutor.GitResult(1, "", "failed to prepare main branch");
             }
 
             return GitExecutor.execute(repoDir, resolveNetworkTimeoutSeconds(), "push", "-u", "origin", MAIN_BRANCH);
@@ -1086,11 +1079,19 @@ public class YuCommand extends CommandBase {
     }
 
     private String resolveOperationBranch(MinecraftServer server, File repoDir) {
-        String worldBranch = buildWorldBranch(server.getEntityWorld().getSaveHandler().getWorldDirectory().getName());
+        String worldBranch = resolveWorldBranch(server);
         if (checkoutOrCreateBranch(repoDir, worldBranch)) {
             return worldBranch;
         }
         return resolveCurrentBranch(repoDir);
+    }
+
+    private boolean ensureInitializedRepo(File repoDir, ICommandSender sender, String message) {
+        if (new File(repoDir, ".git").exists()) {
+            return true;
+        }
+        sender.sendMessage(formatMessage(TextFormatting.RED, message));
+        return false;
     }
 
     private String getRemoteUrl(File repoDir, String remoteName) {
@@ -1241,8 +1242,8 @@ public class YuCommand extends CommandBase {
         }
 
         try {
-            GitExecutor.GitResult hasOrigin = GitExecutor.execute(repoDir, 10, "remote", "get-url", "origin");
-            if (hasOrigin.isSuccess() && hasOrigin.stdout != null && !hasOrigin.stdout.trim().isEmpty()) {
+            String existingOrigin = getRemoteUrl(repoDir, "origin");
+            if (existingOrigin != null && !existingOrigin.trim().isEmpty()) {
                 return;
             }
 
