@@ -31,10 +31,8 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 public class YuCommand extends CommandBase {
@@ -43,9 +41,9 @@ public class YuCommand extends CommandBase {
     private static final String MAIN_BRANCH = "main";
     private static final String METADATA_DIR = ".yugetgit";
     private static final String MOD_ICON_FILE = "mod-icon.png";
-    private static final String BRANCH_INDEX_FILE = "branch-index.md";
     private static final String README_FILE = "README.md";
     private final BackupCommand backupCommand = new BackupCommand();
+    private volatile boolean networkTimeoutHintShown = false;
 
     private static final class ParsedArgs {
         private String subcommand;
@@ -94,7 +92,7 @@ public class YuCommand extends CommandBase {
 
     @Override
     public String getUsage(ICommandSender sender) {
-        return "/yu <help|init|repo|backup|debug-dialog|fetch|push|pull|merge|reset>";
+        return "/yu <help|init|remote|backup|debug-dialog|fetch|push|pull|merge|reset>";
     }
 
     @Override
@@ -110,19 +108,23 @@ public class YuCommand extends CommandBase {
     @Override
     public List<String> getTabCompletions(MinecraftServer server, ICommandSender sender, String[] args, @Nullable BlockPos targetPos) {
         if (args.length == 1) {
-            return getListOfStringsMatchingLastWord(args, "help", "init", "repo", "backup", "debug-dialog", "fetch", "push", "pull", "merge", "reset");
+            return getListOfStringsMatchingLastWord(args, "help", "init", "remote", "backup", "debug-dialog", "fetch", "push", "pull", "merge", "reset");
         }
 
         if (args.length == 2 && "backup".equalsIgnoreCase(args[0])) {
             return getListOfStringsMatchingLastWord(args, "help", "save", "list", "details", "restore", "worlds", "status");
         }
 
-        if (args.length == 2 && "repo".equalsIgnoreCase(args[0])) {
+        if (args.length == 2 && "remote".equalsIgnoreCase(args[0])) {
             return getListOfStringsMatchingLastWord(args, "add");
         }
 
         if (args.length == 2 && "push".equalsIgnoreCase(args[0])) {
             return getListOfStringsMatchingLastWord(args, "--force");
+        }
+
+        if (args.length == 2 && "pull".equalsIgnoreCase(args[0])) {
+            return getListOfStringsMatchingLastWord(args, "--hard");
         }
 
         if (args.length == 2 && "fetch".equalsIgnoreCase(args[0])) {
@@ -171,7 +173,7 @@ public class YuCommand extends CommandBase {
                 }
                 runInit(server, sender);
                 return;
-            case "repo":
+            case "remote":
                 runRepo(server, sender, parsed);
                 return;
             case "debug-dialog":
@@ -196,11 +198,11 @@ public class YuCommand extends CommandBase {
                 runNetworkOperation(server, sender, "push", parsed.force, "origin");
                 return;
             case "pull":
-                if (!parsed.positionals.isEmpty() || parsed.force || parsed.hard) {
+                if (!parsed.positionals.isEmpty() || parsed.force) {
                     sender.sendMessage(formatMessage(TextFormatting.RED, "Invalid /yu pull usage. Run /yu help."));
                     return;
                 }
-                runNetworkOperation(server, sender, "pull", false, "origin");
+                runNetworkOperation(server, sender, parsed.hard ? "pull-hard" : "pull", false, "origin");
                 return;
             case "merge":
                 if (!parsed.positionals.isEmpty() || parsed.force || parsed.hard) {
@@ -221,12 +223,12 @@ public class YuCommand extends CommandBase {
     private void sendHelp(ICommandSender sender) {
         sender.sendMessage(formatMessage(TextFormatting.AQUA, "Available /yu commands:"));
         sendPlainLine(sender, TextFormatting.WHITE, "/yu init");
-        sendPlainLine(sender, TextFormatting.WHITE, "/yu repo add <url>");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu remote add <url>");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu backup <help|save|list|details|restore|worlds|status>");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu debug-dialog");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu fetch [remote]");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu push [--force]");
-        sendPlainLine(sender, TextFormatting.WHITE, "/yu pull");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu pull [--hard]");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu merge");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu reset --hard <ref>");
     }
@@ -305,12 +307,12 @@ public class YuCommand extends CommandBase {
 
     private void runRepo(MinecraftServer server, ICommandSender sender, ParsedArgs parsed) {
         if (parsed.force || parsed.hard || parsed.positionals.isEmpty() || !"add".equalsIgnoreCase(parsed.positionals.get(0))) {
-            sender.sendMessage(formatMessage(TextFormatting.RED, "Unknown repo command. Run /yu help."));
+            sender.sendMessage(formatMessage(TextFormatting.RED, "Unknown remote command. Run /yu help."));
             return;
         }
 
         if (parsed.positionals.size() < 2) {
-            sender.sendMessage(formatMessage(TextFormatting.RED, "Missing URL. Usage: /yu repo add <url>"));
+            sender.sendMessage(formatMessage(TextFormatting.RED, "Missing URL. Usage: /yu remote add <url>"));
             return;
         }
 
@@ -350,19 +352,15 @@ public class YuCommand extends CommandBase {
                 return;
             }
 
-            sender.sendMessage(formatMessage(TextFormatting.GREEN, "Remote origin configured: " + normalizedRemoteUrl));
-
             String worldBranch = buildWorldBranch(worldKey);
-            if (refreshMainMetadataAfterRemoteAdd(repoDir, worldBranch, sender)) {
-                sender.sendMessage(formatMessage(TextFormatting.GREEN, "Updated main README metadata for this remote."));
-            } else {
-                sender.sendMessage(formatMessage(TextFormatting.YELLOW,
-                    "Remote set, but failed to refresh main README metadata automatically."));
+            refreshMainMetadataAfterRemoteAdd(repoDir, worldBranch, sender);
+            GitExecutor.GitResult mainPushResult = pushMainBranchToOrigin(repoDir);
+            if (!mainPushResult.isSuccess()) {
+                sender.sendMessage(formatMessage(TextFormatting.YELLOW, "Main branch push skipped: " + shortGitError(mainPushResult)));
             }
 
             if (checkoutOrCreateBranch(repoDir, worldBranch)) {
-                sender.sendMessage(formatMessage(TextFormatting.GREEN,
-                    "Switched to world branch: " + worldBranch + ". Run /yu push to sync world commits."));
+                sender.sendMessage(formatMessage(TextFormatting.GREEN, "Remote added. Run /yu push to sync."));
             } else {
                 sender.sendMessage(formatMessage(TextFormatting.YELLOW,
                     "Remote configured, but failed to switch to world branch: " + worldBranch));
@@ -441,19 +439,26 @@ public class YuCommand extends CommandBase {
             originUrl = ensureRemoteConfiguredFromDefault(repoDir, sender, remoteName);
         }
         if (originUrl == null || originUrl.isEmpty()) {
-            sender.sendMessage(formatMessage(TextFormatting.RED, "Remote '" + remoteName + "' not found. Run /yu repo add <url>."));
+            sender.sendMessage(formatMessage(TextFormatting.RED, "Remote '" + remoteName + "' not found. Run /yu remote add <url>."));
             return;
         }
 
+        String targetBranch = resolveOperationBranch(server, repoDir);
+
         sender.sendMessage(formatMessage(TextFormatting.WHITE, "Starting git " + operation + "..."));
         int networkTimeoutSeconds = resolveNetworkTimeoutSeconds();
-        sender.sendMessage(formatMessage(TextFormatting.GRAY,
-            "If the remote does not respond, this command times out after " + networkTimeoutSeconds + " seconds."));
+        sendNetworkTimeoutHintIfNeeded(sender, networkTimeoutSeconds);
+
+        if ("pull-hard".equals(operation)) {
+            runHardPull(server, sender, repoDir, remoteName, targetBranch);
+            return;
+        }
+
         BossInfoServer networkBar = createNetworkBossBar(sender, operation);
         bumpNetworkBossBar(server, networkBar, operation, 15, null);
         BackgroundExecutor.execute(() -> {
             try {
-                String branch = resolveCurrentBranch(repoDir);
+                String branch = targetBranch;
 
                 GitExecutor.GitResult result = runGitWithProgress(repoDir, operation, branch, forcePush, remoteName,
                     progress -> updateNetworkBossBar(server, networkBar, operation, progress));
@@ -482,6 +487,16 @@ public class YuCommand extends CommandBase {
                 if (("pull".equals(operation) || "merge".equals(operation)) && loweredError.contains("unstaged changes")) {
                     sendScheduled(server, sender, formatMessage(TextFormatting.YELLOW, "Pull blocked by local unstaged changes."));
                     sendScheduled(server, sender, plainMessage(TextFormatting.WHITE, "Create a backup or reset local state, then retry pull/merge."));
+                    return;
+                }
+
+                if ("pull".equals(operation) && (loweredError.contains("could not apply") || loweredError.contains("conflict") || loweredError.contains("rebase"))) {
+                    try {
+                        GitExecutor.execute(repoDir, 10, "rebase", "--abort");
+                    } catch (Exception ignored) {
+                    }
+                    sendScheduled(server, sender, formatMessage(TextFormatting.YELLOW, "Pull hit binary conflicts and was aborted automatically."));
+                    sendScheduled(server, sender, plainMessage(TextFormatting.WHITE, "Use /yu pull --hard to force-sync your world branch to remote state."));
                     return;
                 }
 
@@ -521,9 +536,9 @@ public class YuCommand extends CommandBase {
             cmdArgs.addAll(Arrays.asList("fetch", remoteName, "--prune"));
         } else if ("push".equals(operation)) {
             if (forcePush) {
-                cmdArgs.addAll(Arrays.asList("push", "--force", "--all", remoteName));
+                cmdArgs.addAll(Arrays.asList("push", "--force", "-u", remoteName, branch));
             } else {
-                cmdArgs.addAll(Arrays.asList("push", "--all", remoteName));
+                cmdArgs.addAll(Arrays.asList("push", "-u", remoteName, branch));
             }
         } else if ("merge".equals(operation)) {
             cmdArgs.addAll(Arrays.asList("pull", "--no-rebase", remoteName, branch));
@@ -642,59 +657,68 @@ public class YuCommand extends CommandBase {
         File worldDir = server.getEntityWorld().getSaveHandler().getWorldDirectory();
         String worldKey = worldDir.getName();
         File repoDir = PlatformPaths.getWorldsDir().resolve(worldKey).toFile();
+        sendScheduled(server, sender, formatMessage(TextFormatting.WHITE, "Initializing repository..."));
+        BackgroundExecutor.execute(() -> {
+            try {
+                if (!repoDir.exists() && !repoDir.mkdirs()) {
+                    sendScheduled(server, sender, formatMessage(TextFormatting.RED, "Failed to create world backup directory."));
+                    return;
+                }
 
-        try {
-            if (!repoDir.exists() && !repoDir.mkdirs()) {
-                sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to create world backup directory."));
-                return;
+                File gitDir = new File(repoDir, ".git");
+                if (!gitDir.exists()) {
+                    RepoConfig.initAndConfigure(repoDir);
+                } else {
+                    RepoConfig.ensureOperationalConfig(repoDir);
+                }
+
+                String worldBranch = buildWorldBranch(worldKey);
+                boolean worldBranchAlreadyExists = hasBranch(repoDir, worldBranch);
+
+                String headBeforeInit = resolveHeadCommit(repoDir);
+                if (!ensureWorldBranchReference(repoDir, worldBranch, headBeforeInit)) {
+                    sendScheduled(server, sender, formatMessage(TextFormatting.RED, "Failed to create/update world branch: " + worldBranch));
+                    return;
+                }
+
+                if (!rebuildMainMetadataBranch(repoDir, worldBranch, sender)) {
+                    sendScheduled(server, sender, formatMessage(TextFormatting.RED, "Failed to rebuild main metadata branch."));
+                    return;
+                }
+
+                if (!hasBranch(repoDir, worldBranch) && !createBranchIfMissing(repoDir, worldBranch)) {
+                    sendScheduled(server, sender, formatMessage(TextFormatting.RED, "Failed to create world branch: " + worldBranch));
+                    return;
+                }
+
+                if (!worldBranchAlreadyExists) {
+                    initializeWorldBranchWithoutMetadata(repoDir, worldBranch);
+                }
+
+                if (!checkoutOrCreateBranch(repoDir, MAIN_BRANCH)) {
+                    sendScheduled(server, sender, formatMessage(TextFormatting.RED, "Failed to switch/create main branch."));
+                    return;
+                }
+
+                applyConfiguredDefaultOrigin(repoDir);
+                if (!ensureMainBranchCommitted(repoDir)) {
+                    sendScheduled(server, sender, formatMessage(TextFormatting.RED, "Failed to finalize main branch commit."));
+                    return;
+                }
+                checkoutOrCreateBranch(repoDir, MAIN_BRANCH);
+
+                String originUrl = getRemoteUrl(repoDir, "origin");
+                sendScheduled(server, sender, formatMessage(TextFormatting.WHITE, "Init complete."));
+                sendScheduled(server, sender, new TextComponentString(TextFormatting.GOLD + "  origin: " + TextFormatting.WHITE
+                    + (originUrl == null || originUrl.trim().isEmpty() ? "(not configured)" : originUrl)));
+                sendScheduled(server, sender, new TextComponentString(TextFormatting.GOLD + "  branch: " + TextFormatting.WHITE + worldBranch));
+                sendScheduled(server, sender, new TextComponentString(TextFormatting.GOLD + "  next: " + TextFormatting.WHITE + "/yu backup save -m \"first backup\""));
+                sendScheduled(server, sender, new TextComponentString(TextFormatting.GOLD + "  optional: " + TextFormatting.WHITE + "/yu remote add <url>"));
+                sendScheduled(server, sender, new TextComponentString(TextFormatting.GOLD + "  optional 2: " + TextFormatting.WHITE + "/yu push or /yu pull"));
+            } catch (Exception e) {
+                sendScheduled(server, sender, formatMessage(TextFormatting.RED, "yu init failed: " + e.getMessage()));
             }
-
-            File gitDir = new File(repoDir, ".git");
-            if (!gitDir.exists()) {
-                RepoConfig.initAndConfigure(repoDir);
-                sender.sendMessage(formatMessage(TextFormatting.GREEN, "Initialized local repository for this world."));
-            } else {
-                RepoConfig.ensureOperationalConfig(repoDir);
-                sender.sendMessage(formatMessage(TextFormatting.WHITE, "Repository already initialized. Refreshing operational config."));
-            }
-
-            String worldBranch = buildWorldBranch(worldKey);
-            boolean worldBranchAlreadyExists = hasBranch(repoDir, worldBranch);
-
-            String headBeforeInit = resolveHeadCommit(repoDir);
-            if (!ensureWorldBranchReference(repoDir, worldBranch, headBeforeInit)) {
-                sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to create/update world branch: " + worldBranch));
-                return;
-            }
-
-            if (!rebuildMainMetadataBranch(repoDir, worldBranch, sender)) {
-                sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to rebuild main metadata branch."));
-                return;
-            }
-
-            if (!hasBranch(repoDir, worldBranch) && !createBranchIfMissing(repoDir, worldBranch)) {
-                sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to create world branch: " + worldBranch));
-                return;
-            }
-
-            if (!worldBranchAlreadyExists) {
-                initializeWorldBranchWithoutMetadata(repoDir, worldBranch);
-            }
-
-            if (!checkoutOrCreateBranch(repoDir, MAIN_BRANCH)) {
-                sender.sendMessage(formatMessage(TextFormatting.RED, "Failed to switch/create main branch."));
-                return;
-            }
-
-            applyConfiguredDefaultOrigin(repoDir, sender);
-
-            sender.sendMessage(formatMessage(TextFormatting.GREEN, "yu init complete. Default branch is " + MAIN_BRANCH + ", world branch is " + worldBranch));
-            sendPlainLine(sender, TextFormatting.WHITE, "Next: run /yu backup save -m \"first backup\"");
-            sendPlainLine(sender, TextFormatting.WHITE, "Optional remote: /yu repo add <url>");
-            sendPlainLine(sender, TextFormatting.WHITE, "Then sync with /yu push or /yu pull");
-        } catch (Exception e) {
-            sender.sendMessage(formatMessage(TextFormatting.RED, "yu init failed: " + e.getMessage()));
-        }
+        });
     }
 
     private boolean checkoutOrCreateBranch(File repoDir, String branchName) {
@@ -707,7 +731,11 @@ public class YuCommand extends CommandBase {
                 return true;
             }
 
-            return com.yugetGIT.core.git.GitExecutor.execute(repoDir, 15, "symbolic-ref", "HEAD", "refs/heads/" + branchName).isSuccess();
+            if (com.yugetGIT.core.git.GitExecutor.execute(repoDir, 15, "checkout", "--orphan", branchName).isSuccess()) {
+                return true;
+            }
+
+            return branchName.equals(resolveCurrentBranch(repoDir));
         } catch (Exception e) {
             return false;
         }
@@ -790,7 +818,35 @@ public class YuCommand extends CommandBase {
             ensureLocalCommitIdentity(repoDir);
             commitRepositoryMetadataIfNeeded(repoDir, sender);
 
+            if (resolveHeadCommit(repoDir) == null) {
+                ensureLocalCommitIdentity(repoDir);
+                GitExecutor.execute(repoDir, 10, "commit", "--allow-empty", "-m", "Initialize main branch");
+            }
+
             return hasBranch(repoDir, MAIN_BRANCH) || checkoutOrCreateBranch(repoDir, MAIN_BRANCH);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean ensureMainBranchCommitted(File repoDir) {
+        try {
+            if (!checkoutOrCreateBranch(repoDir, MAIN_BRANCH)) {
+                return false;
+            }
+
+            if (resolveHeadCommit(repoDir) != null) {
+                return true;
+            }
+
+            ensureLocalCommitIdentity(repoDir);
+            GitExecutor.execute(repoDir, 10, "add", "-A");
+            GitExecutor.GitResult commitResult = GitExecutor.execute(repoDir, 10, "commit", "--allow-empty", "-m", "Initialize main branch");
+            if (!commitResult.isSuccess()) {
+                return false;
+            }
+
+            return resolveHeadCommit(repoDir) != null;
         } catch (Exception e) {
             return false;
         }
@@ -844,41 +900,18 @@ public class YuCommand extends CommandBase {
 
             writeModIcon(metadataDirectory);
 
-            File branchIndexPath = new File(metadataDirectory, BRANCH_INDEX_FILE);
-            Set<String> indexedBranches = loadIndexedBranches(branchIndexPath);
-            indexedBranches.add(MAIN_BRANCH);
-            indexedBranches.add(worldBranch);
-            indexedBranches.addAll(listLocalBranches(repoDir));
-            saveBranchIndex(branchIndexPath, indexedBranches);
+            File branchIndexPath = new File(metadataDirectory, "branch-index.md");
+            if (branchIndexPath.exists()) {
+                try {
+                    Files.delete(branchIndexPath.toPath());
+                } catch (Exception ignored) {
+                }
+            }
 
             File readmePath = new File(repoDir, README_FILE);
-            saveRepositoryReadme(readmePath, indexedBranches, getRemoteUrl(repoDir, "origin"));
+            saveRepositoryReadme(readmePath);
         } catch (Exception ignored) {
         }
-    }
-
-    private Set<String> listLocalBranches(File repoDir) {
-        Set<String> localBranches = new LinkedHashSet<>();
-        try {
-            GitExecutor.GitResult branchResult = GitExecutor.execute(repoDir, 10, "for-each-ref", "--format=%(refname:short)", "refs/heads");
-            if (!branchResult.isSuccess() || branchResult.stdout == null || branchResult.stdout.trim().isEmpty()) {
-                return localBranches;
-            }
-
-            String[] lines = branchResult.stdout.split("\\n");
-            for (String line : lines) {
-                if (line == null) {
-                    continue;
-                }
-
-                String branch = line.trim();
-                if (!branch.isEmpty()) {
-                    localBranches.add(branch);
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        return localBranches;
     }
 
     private void writeModIcon(File metadataDirectory) {
@@ -903,154 +936,20 @@ public class YuCommand extends CommandBase {
         }
     }
 
-    private Set<String> loadIndexedBranches(File branchIndexPath) {
-        Set<String> indexedBranches = new LinkedHashSet<>();
-        if (!branchIndexPath.exists()) {
-            return indexedBranches;
-        }
-
-        try {
-            List<String> lines = Files.readAllLines(branchIndexPath.toPath(), StandardCharsets.UTF_8);
-            for (String line : lines) {
-                if (line == null) {
-                    continue;
-                }
-                String trimmed = line.trim();
-                if (trimmed.startsWith("- ")) {
-                    String branchName = trimmed.substring(2).trim();
-                    if (!branchName.isEmpty()) {
-                        indexedBranches.add(branchName);
-                    }
-                }
-            }
-        } catch (Exception ignored) {
-        }
-
-        return indexedBranches;
-    }
-
-    private void saveBranchIndex(File branchIndexPath, Set<String> indexedBranches) {
-        List<String> lines = new ArrayList<>();
-        lines.add("# Branch Index");
-        lines.add("");
-        lines.add("Branches created by yugetGIT init:");
-        lines.add("");
-        for (String branch : indexedBranches) {
-            lines.add("- " + branch);
-        }
-
-        try {
-            Files.write(branchIndexPath.toPath(), lines, StandardCharsets.UTF_8);
-        } catch (Exception ignored) {
-        }
-    }
-
-    private void saveRepositoryReadme(File readmePath, Set<String> indexedBranches, String remoteUrl) {
+    private void saveRepositoryReadme(File readmePath) {
         List<String> lines = new ArrayList<>();
         lines.add("# yugetGIT World Repository");
+        lines.add("yugetGIT is a backup mod for minecraft that uses git and git lfs to manage world snapshots.");
         lines.add("");
-        lines.add("![yugetGIT icon](./" + METADATA_DIR + "/" + MOD_ICON_FILE + ")");
+        lines.add("- Version: **0.1.0**");
+        lines.add("- This file is generated by `/yu init`.");
         lines.add("");
-        lines.add("- Mod: **" + Tags.MOD_NAME + "**");
-        lines.add("- Version: **" + Tags.VERSION + "**");
-        lines.add("");
-        lines.add("## Branch Index");
-        lines.add("");
-        lines.add("| # | Branch |");
-        lines.add("|---|--------|");
-
-        int index = 1;
-        for (String branch : indexedBranches) {
-            String branchLink = resolveReadmeBranchLink(branch, remoteUrl);
-            lines.add("| " + index + " | [" + branch + "](" + branchLink + ") |");
-            index++;
-        }
-
-        lines.add("");
-        lines.add("This file is generated by `/yu init` and refreshed when new world branches are initialized.");
+        lines.add("![yugetGIT icon](./.yugetgit/mod-icon.png)");
 
         try {
             Files.write(readmePath.toPath(), lines, StandardCharsets.UTF_8);
         } catch (Exception ignored) {
         }
-    }
-
-    private String resolveReadmeBranchLink(String branch, String remoteUrl) {
-        String encodedBranch = branch.replace("/", "%2F");
-        String webRepoBaseUrl = resolveWebRepoBaseUrl(remoteUrl);
-        if (webRepoBaseUrl != null) {
-            if (webRepoBaseUrl.contains("github.com/")) {
-                return webRepoBaseUrl + "/tree/" + encodedBranch;
-            }
-            return webRepoBaseUrl + "/src/branch/" + encodedBranch;
-        }
-        return "../../tree/" + encodedBranch;
-    }
-
-    private String resolveWebRepoBaseUrl(String remoteUrl) {
-        if (remoteUrl == null) {
-            return null;
-        }
-
-        String trimmed = remoteUrl.trim();
-        if (trimmed.isEmpty()) {
-            return null;
-        }
-
-        String schemeAndHost;
-        String repoPath;
-        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-            int schemeEnd = trimmed.indexOf("://") + 3;
-            int hostEnd = trimmed.indexOf('/', schemeEnd);
-            if (hostEnd < 0) {
-                return null;
-            }
-            schemeAndHost = trimmed.substring(0, hostEnd);
-            repoPath = trimmed.substring(hostEnd + 1);
-        } else if (trimmed.startsWith("git@") && trimmed.contains(":")) {
-            int atIndex = trimmed.indexOf('@');
-            int colonIndex = trimmed.indexOf(':', atIndex + 1);
-            if (colonIndex < 0) {
-                return null;
-            }
-            String host = trimmed.substring(atIndex + 1, colonIndex);
-            schemeAndHost = "https://" + host;
-            repoPath = trimmed.substring(colonIndex + 1);
-        } else if (trimmed.startsWith("ssh://git@")) {
-            String noScheme = trimmed.substring("ssh://git@".length());
-            int slashIndex = noScheme.indexOf('/');
-            if (slashIndex < 0) {
-                return null;
-            }
-            String host = noScheme.substring(0, slashIndex);
-            schemeAndHost = "https://" + host;
-            repoPath = noScheme.substring(slashIndex + 1);
-        } else {
-            return null;
-        }
-
-        int queryIndex = repoPath.indexOf('?');
-        if (queryIndex >= 0) {
-            repoPath = repoPath.substring(0, queryIndex);
-        }
-        int fragmentIndex = repoPath.indexOf('#');
-        if (fragmentIndex >= 0) {
-            repoPath = repoPath.substring(0, fragmentIndex);
-        }
-
-        if (repoPath.endsWith(".git")) {
-            repoPath = repoPath.substring(0, repoPath.length() - 4);
-        }
-        while (repoPath.endsWith("/")) {
-            repoPath = repoPath.substring(0, repoPath.length() - 1);
-        }
-
-        String[] parts = repoPath.split("/");
-        if (parts.length < 2 || parts[0].trim().isEmpty() || parts[1].trim().isEmpty()) {
-            return null;
-        }
-
-        return schemeAndHost + "/" + parts[0].trim() + "/" + parts[1].trim();
     }
 
     private void commitRepositoryMetadataIfNeeded(File repoDir, ICommandSender sender) {
@@ -1061,6 +960,12 @@ public class YuCommand extends CommandBase {
             }
 
             GitExecutor.execute(repoDir, 10, "add", README_FILE, METADATA_DIR);
+            GitExecutor.GitResult stagedMetadata = GitExecutor.execute(repoDir, 10,
+                "diff", "--cached", "--name-only", "--", README_FILE, METADATA_DIR);
+            if (!stagedMetadata.isSuccess() || stagedMetadata.stdout == null || stagedMetadata.stdout.trim().isEmpty()) {
+                return;
+            }
+
             GitExecutor.GitResult commitResult = GitExecutor.execute(repoDir, 10, "commit", "-m", "Repository created via /yu init");
             if (!commitResult.isSuccess()) {
                 sender.sendMessage(formatMessage(TextFormatting.YELLOW,
@@ -1096,7 +1001,7 @@ public class YuCommand extends CommandBase {
     }
 
     private TextComponentString formatMessage(TextFormatting color, String text) {
-        return new TextComponentString(TextFormatting.GOLD + "[yugetGIT]  " + TextFormatting.GRAY + inferAsciiIcon(text) + color + text);
+        return new TextComponentString(TextFormatting.GOLD + "[yugetGIT]  " + color + text);
     }
 
     private TextComponentString plainMessage(TextFormatting color, String text) {
@@ -1111,19 +1016,81 @@ public class YuCommand extends CommandBase {
         if (result == null) {
             return "Unknown git error.";
         }
+        String text = null;
         if (result.stderr != null && !result.stderr.trim().isEmpty()) {
-            return result.stderr.trim();
+            text = result.stderr.trim();
+        } else if (result.stdout != null && !result.stdout.trim().isEmpty()) {
+            text = result.stdout.trim();
         }
-        if (result.stdout != null && !result.stdout.trim().isEmpty()) {
-            return result.stdout.trim();
+        if (text != null) {
+            String[] lines = text.split("\\n");
+            for (String line : lines) {
+                String normalized = line == null ? "" : line.trim();
+                if (!normalized.isEmpty() && !normalized.toLowerCase().startsWith("hint:")) {
+                    return normalized.length() > 220 ? normalized.substring(0, 220) + "..." : normalized;
+                }
+            }
+            return lines.length > 0 ? lines[0] : text;
         }
         return "Unknown git error.";
+    }
+
+    private void runHardPull(MinecraftServer server, ICommandSender sender, File repoDir, String remoteName, String branch) {
+        BackgroundExecutor.execute(() -> {
+            try {
+                GitExecutor.GitResult fetchResult = GitExecutor.execute(repoDir, resolveNetworkTimeoutSeconds(), "fetch", remoteName, "--prune");
+                if (!fetchResult.isSuccess()) {
+                    sendScheduled(server, sender, formatMessage(TextFormatting.RED, "git pull-hard failed."));
+                    sendScheduled(server, sender, formatMessage(TextFormatting.RED, shortGitError(fetchResult)));
+                    return;
+                }
+
+                try {
+                    GitExecutor.execute(repoDir, 10, "rebase", "--abort");
+                } catch (Exception ignored) {
+                }
+
+                GitExecutor.GitResult resetResult = GitExecutor.execute(repoDir, resolveNetworkTimeoutSeconds(),
+                    "reset", "--hard", remoteName + "/" + branch);
+                if (resetResult.isSuccess()) {
+                    sendScheduled(server, sender, formatMessage(TextFormatting.GREEN, "git pull --hard succeeded."));
+                } else {
+                    sendScheduled(server, sender, formatMessage(TextFormatting.RED, "git pull --hard failed."));
+                    sendScheduled(server, sender, formatMessage(TextFormatting.RED, shortGitError(resetResult)));
+                }
+            } catch (Exception e) {
+                sendScheduled(server, sender, formatMessage(TextFormatting.RED, "git pull --hard failed: " + e.getMessage()));
+            }
+        });
     }
 
     private File resolveWorldRepo(MinecraftServer server) {
         File worldDir = server.getEntityWorld().getSaveHandler().getWorldDirectory();
         String worldKey = worldDir.getName();
         return PlatformPaths.getWorldsDir().resolve(worldKey).toFile();
+    }
+
+    private GitExecutor.GitResult pushMainBranchToOrigin(File repoDir) {
+        try {
+            if (!checkoutOrCreateBranch(repoDir, MAIN_BRANCH)) {
+                return new GitExecutor.GitResult(1, "", "failed to checkout main branch");
+            }
+            if (!ensureMainBranchCommitted(repoDir)) {
+                return new GitExecutor.GitResult(1, "", "failed to ensure main branch commit");
+            }
+
+            return GitExecutor.execute(repoDir, resolveNetworkTimeoutSeconds(), "push", "-u", "origin", MAIN_BRANCH);
+        } catch (Exception e) {
+            return new GitExecutor.GitResult(1, "", e.getMessage());
+        }
+    }
+
+    private String resolveOperationBranch(MinecraftServer server, File repoDir) {
+        String worldBranch = buildWorldBranch(server.getEntityWorld().getSaveHandler().getWorldDirectory().getName());
+        if (checkoutOrCreateBranch(repoDir, worldBranch)) {
+            return worldBranch;
+        }
+        return resolveCurrentBranch(repoDir);
     }
 
     private String getRemoteUrl(File repoDir, String remoteName) {
@@ -1267,7 +1234,7 @@ public class YuCommand extends CommandBase {
         return yugetGITConfig.gitNetwork.allowInsecureTls;
     }
 
-    private void applyConfiguredDefaultOrigin(File repoDir, ICommandSender sender) {
+    private void applyConfiguredDefaultOrigin(File repoDir) {
         String defaultRemoteUrl = yugetGITConfig.gitNetwork.defaultRemoteUrl == null ? "" : yugetGITConfig.gitNetwork.defaultRemoteUrl.trim();
         if (defaultRemoteUrl.isEmpty()) {
             return;
@@ -1282,7 +1249,7 @@ public class YuCommand extends CommandBase {
             String normalizedRemoteUrl = normalizeRemoteUrl(defaultRemoteUrl);
             GitExecutor.GitResult addResult = GitExecutor.execute(repoDir, 10, "remote", "add", "origin", normalizedRemoteUrl);
             if (addResult.isSuccess()) {
-                sender.sendMessage(formatMessage(TextFormatting.GREEN, "Default origin remote configured from settings: " + normalizedRemoteUrl));
+                return;
             }
         } catch (Exception ignored) {
         }
@@ -1310,13 +1277,16 @@ public class YuCommand extends CommandBase {
         return null;
     }
 
-    private String inferAsciiIcon(String text) {
-        String lowered = text == null ? "" : text.toLowerCase();
-        if (lowered.contains("push")) return "[PUSH] ";
-        if (lowered.contains("pull") || lowered.contains("fetch") || lowered.contains("merge")) return "[SYNC] ";
-        if (lowered.contains("backup") || lowered.contains("save")) return "[SAVE] ";
-        if (lowered.contains("error") || lowered.contains("failed")) return "[ERR] ";
-        if (lowered.contains("init") || lowered.contains("configured")) return "[GIT] ";
-        return "[INFO] ";
+    private void sendNetworkTimeoutHintIfNeeded(ICommandSender sender, int timeoutSeconds) {
+        boolean alwaysShow = yugetGITConfig.gitNetwork.showNetworkTimeoutHintEveryTime;
+        if (!alwaysShow && networkTimeoutHintShown) {
+            return;
+        }
+
+        sender.sendMessage(formatMessage(TextFormatting.GRAY,
+            "If the remote does not respond, this command times out after " + timeoutSeconds + " seconds."));
+        if (!alwaysShow) {
+            networkTimeoutHintShown = true;
+        }
     }
 }

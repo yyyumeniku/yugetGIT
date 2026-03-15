@@ -37,6 +37,8 @@ public class WorldSaveHandler {
     private long lastBackupTime = System.currentTimeMillis();
     private final AtomicBoolean exitSaveTriggered = new AtomicBoolean(false);
     private final Map<String, Long> worldLoadedAt = new ConcurrentHashMap<>();
+    private final java.util.Set<String> autoFetchTriggeredWorlds = ConcurrentHashMap.newKeySet();
+    private final java.util.Set<String> pendingAutoFetchWorlds = ConcurrentHashMap.newKeySet();
     private boolean hasLastSeenPlayerPosition = false;
     private double lastSeenPlayerX;
     private double lastSeenPlayerY;
@@ -53,19 +55,22 @@ public class WorldSaveHandler {
         }
 
         WorldServer world = (WorldServer) event.getWorld();
+        if (world.provider.getDimension() != 0) {
+            return;
+        }
+
         File worldDir = world.getSaveHandler().getWorldDirectory();
-        worldLoadedAt.put(worldDir.getName(), System.currentTimeMillis());
+        String worldKey = worldDir.getName();
+        worldLoadedAt.put(worldKey, System.currentTimeMillis());
+        autoFetchTriggeredWorlds.remove(worldKey);
 
         if (!StateProperties.isBackupsEnabled() || !yugetGITConfig.gitNetwork.autoFetchOnWorldStart) {
             return;
         }
 
-        MinecraftServer server = world.getMinecraftServer();
-        if (server == null) {
-            return;
+        if (autoFetchTriggeredWorlds.add(worldKey)) {
+            pendingAutoFetchWorlds.add(worldKey);
         }
-
-        triggerAutoFetchForWorld(server, worldDir);
     }
 
     @SubscribeEvent
@@ -74,9 +79,10 @@ public class WorldSaveHandler {
         if (!StateProperties.isBackupsEnabled()) return;
 
         MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
+        processPendingAutoFetch(server);
         updateLastSeenPlayerPosition(server);
         
-        int intervalMinutes = yugetGITConfig.backup.commitIntervalMinutes;
+        int intervalMinutes = yugetGITConfig.backup.backupIntervalMinutes;
         if (intervalMinutes <= 0) return;
         
         long now = System.currentTimeMillis();
@@ -119,6 +125,16 @@ public class WorldSaveHandler {
         File repoDir = PlatformPaths.getWorldsDir().resolve(worldKey).toFile();
         if (!hasManualBackupInitialized(repoDir)) return;
 
+        int intervalMinutes = yugetGITConfig.backup.backupIntervalMinutes;
+        if (intervalMinutes > 0) {
+            long now = System.currentTimeMillis();
+            long requiredGapMs = intervalMinutes * 60L * 1000L;
+            if (now - lastBackupTime < requiredGapMs) {
+                return;
+            }
+        }
+
+        lastBackupTime = System.currentTimeMillis();
         runCommitForWorld(server, world, "Auto-commit on save");
     }
 
@@ -198,6 +214,12 @@ public class WorldSaveHandler {
             RepoConfig.ensureOperationalConfig(repoDir);
         } catch (Exception e) {
             e.printStackTrace();
+            if (resetExitFlagOnReturn) exitSaveTriggered.set(false);
+            return;
+        }
+
+        String worldBranch = buildWorldBranch(worldKey);
+        if (!checkoutOrCreateBranch(repoDir, worldBranch)) {
             if (resetExitFlagOnReturn) exitSaveTriggered.set(false);
             return;
         }
@@ -322,21 +344,51 @@ public class WorldSaveHandler {
         if (remoteUrl == null || remoteUrl.trim().isEmpty()) {
             return;
         }
-
-        sendServerChat(server, TextFormatting.WHITE, "[FETCH] Auto-fetch started for world " + worldKey + "...");
         BackgroundExecutor.execute(() -> {
             try {
                 int timeoutSeconds = Math.max(5, yugetGITConfig.gitNetwork.yuCommandTimeoutSeconds);
                 GitExecutor.GitResult fetchResult = GitExecutor.execute(repoDir, timeoutSeconds, "fetch", "origin", "--prune");
-                if (fetchResult.isSuccess()) {
-                    sendServerChat(server, TextFormatting.GREEN, "[FETCH] Auto-fetch complete for " + worldKey + ".");
-                } else {
-                    sendServerChat(server, TextFormatting.RED, "[FETCH] Auto-fetch failed: " + shortGitError(fetchResult));
+                if (!fetchResult.isSuccess()) {
+                    sendServerChat(server, TextFormatting.RED, "Auto-fetch failed: " + shortGitError(fetchResult));
+                    return;
+                }
+
+                String currentBranch = resolveCurrentBranch(repoDir);
+                GitExecutor.GitResult logResult = GitExecutor.execute(repoDir, 10, "log", "--pretty=format:%h %s", "-5", "HEAD..refs/remotes/origin/" + currentBranch);
+                if (!logResult.isSuccess() || logResult.stdout == null || logResult.stdout.trim().isEmpty()) {
+                    YugetGITMod.LOGGER.info("[yugetGIT]  No changes fetched");
+                    return;
+                }
+
+                sendServerChat(server, TextFormatting.YELLOW, "Unpulled commits available. Run /yu pull.");
+                String[] lines = logResult.stdout.trim().split("\\n");
+                for (String line : lines) {
+                    String row = line == null ? "" : line.trim();
+                    if (!row.isEmpty()) {
+                        sendServerChat(server, TextFormatting.GRAY, row);
+                    }
                 }
             } catch (Exception e) {
-                sendServerChat(server, TextFormatting.RED, "[FETCH] Auto-fetch failed: " + e.getMessage());
+                sendServerChat(server, TextFormatting.RED, "Auto-fetch failed: " + e.getMessage());
             }
         });
+    }
+
+    private void processPendingAutoFetch(MinecraftServer server) {
+        if (server == null || server.getPlayerList() == null || server.getPlayerList().getPlayers().isEmpty()) {
+            return;
+        }
+
+        if (pendingAutoFetchWorlds.isEmpty()) {
+            return;
+        }
+
+        java.util.List<String> worldsToFetch = new java.util.ArrayList<>(pendingAutoFetchWorlds);
+        for (String worldKey : worldsToFetch) {
+            if (pendingAutoFetchWorlds.remove(worldKey)) {
+                triggerAutoFetchForWorld(server, new File(worldKey));
+            }
+        }
     }
 
     private String getRemoteUrl(File repoDir, String remoteName) {
@@ -354,13 +406,37 @@ public class WorldSaveHandler {
         if (result == null) {
             return "Unknown git error.";
         }
+        String text = null;
         if (result.stderr != null && !result.stderr.trim().isEmpty()) {
-            return result.stderr.trim();
+            text = result.stderr.trim();
+        } else if (result.stdout != null && !result.stdout.trim().isEmpty()) {
+            text = result.stdout.trim();
         }
-        if (result.stdout != null && !result.stdout.trim().isEmpty()) {
-            return result.stdout.trim();
+        if (text != null) {
+            String[] lines = text.split("\\n");
+            for (String line : lines) {
+                String normalized = line == null ? "" : line.trim();
+                if (!normalized.isEmpty() && !normalized.toLowerCase().startsWith("hint:")) {
+                    return normalized.length() > 220 ? normalized.substring(0, 220) + "..." : normalized;
+                }
+            }
+            return lines.length > 0 ? lines[0] : text;
         }
         return "Unknown git error.";
+    }
+
+    private String resolveCurrentBranch(File repoDir) {
+        try {
+            GitExecutor.GitResult branchResult = GitExecutor.execute(repoDir, 10, "rev-parse", "--abbrev-ref", "HEAD");
+            if (branchResult.isSuccess() && branchResult.stdout != null) {
+                String branch = branchResult.stdout.trim();
+                if (!branch.isEmpty() && !"HEAD".equals(branch)) {
+                    return branch;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return "main";
     }
 
     private void sendServerChat(MinecraftServer server, TextFormatting color, String text) {
@@ -370,5 +446,27 @@ public class WorldSaveHandler {
 
         String line = TextFormatting.GOLD + "[yugetGIT]  " + color + text;
         server.addScheduledTask(() -> server.getPlayerList().sendMessage(new TextComponentString(line)));
+    }
+
+    private String buildWorldBranch(String worldKey) {
+        String normalized = worldKey == null ? "world" : worldKey.trim().toLowerCase();
+        normalized = normalized.replaceAll("\\s+", "-");
+        normalized = normalized.replaceAll("[^a-z0-9._/-]", "-");
+        if (normalized.isEmpty()) {
+            normalized = "world";
+        }
+        return "world/" + normalized;
+    }
+
+    private boolean checkoutOrCreateBranch(File repoDir, String branchName) {
+        try {
+            if (GitExecutor.execute(repoDir, 15, "checkout", branchName).isSuccess()) {
+                return true;
+            }
+
+            return GitExecutor.execute(repoDir, 15, "checkout", "-b", branchName).isSuccess();
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

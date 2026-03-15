@@ -7,7 +7,7 @@
 
 ## First Backup
 1. Join a world.
-2. Run `/yu init` to prepare the repository (`main` branch + metadata README/index/icon).
+2. Run `/yu init` to prepare the repository (`main` branch + minimal README metadata).
 3. Run `/yu backup save -m "first backup"`.
 4. Run `/yu backup status` and confirm:
    - Git Resolved: Yes

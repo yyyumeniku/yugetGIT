@@ -633,6 +633,7 @@ Use a unified `ParsedArgs` internal parser loop inside `execute` before routing 
 
 ## yugetGIT UI Feedback Standard
 - Chat logs are for static status/error messages using `TextFormatting.GOLD` and standard formats.
+- Chat message colors must be orange + white only (`TextFormatting.GOLD` for prefix/labels and `TextFormatting.WHITE` for content).
 - Chat prefix format for command output is mandatory: `[yugetGIT]  ` (two spaces after the closing bracket).
 - Multi-line command responses must follow backup-list treatment: one prefixed header/status line, then detail lines without repeating the prefix.
 - This formatting rule applies to all current commands and every new command/subcommand added in future tasks.
@@ -646,7 +647,7 @@ The `/yu` command is the mandatory entrypoint before backup commands.
 Required `/yu` subcommands:
 - `/yu help`
 - `/yu init`
-- `/yu repo add <url>`
+- `/yu remote add <url>`
 - `/yu backup <help|save|list|details|restore|worlds|status>`
 - `/yu debug-dialog`
 - `/yu fetch`
@@ -657,7 +658,7 @@ Behavior rules:
 - User must run `/yu init` after entering a world and before running `/yu backup` operations.
 - Do not use OAuth/token storage in mod code; rely on system git credentials.
 - `init` must initialize local repository state and switch/create a world branch (`world/<worldName>`).
-- `repo add` must set/update local `origin` remote and accept full remote URLs (`https://...` and `git@...`).
+- `remote add` must set/update local `origin` remote and accept full remote URLs (`https://...` and `git@...`).
 - `backup list` should mirror the compact backup list output for quick commit browsing.
 - `fetch` should download remote refs without changing local branch state.
 - `push` and `pull` must target the active world branch and report clear success/failure chat lines.

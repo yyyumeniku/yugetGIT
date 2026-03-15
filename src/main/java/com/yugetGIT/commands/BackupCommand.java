@@ -95,7 +95,7 @@ public class BackupCommand extends CommandBase {
     }
 
     private TextComponentString formatMessage(TextFormatting color, String text) {
-        return new TextComponentString(TextFormatting.GOLD + "[yugetGIT]  " + TextFormatting.GRAY + inferAsciiIcon(text) + color + text);
+        return new TextComponentString(TextFormatting.GOLD + "[yugetGIT]  " + color + text);
     }
 
     private TextComponentString plainMessage(TextFormatting color, String text) {
@@ -137,22 +137,15 @@ public class BackupCommand extends CommandBase {
                         p.error = "Missing value for -m.";
                         break;
                     }
-                    if (i + 2 > args.length - 1) {
-                        String raw = args[i + 1];
-                        boolean quoted = raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"");
-                        if (!quoted) {
-                            p.valid = false;
-                            p.error = "Use -m with quotes, for example: -m \"my commit message\".";
-                            break;
-                        }
-                        p.userString = raw.substring(1, raw.length() - 1).trim();
-                        break;
-                    }
                     StringBuilder sb = new StringBuilder();
                     for (int j = i + 1; j < args.length; j++) {
                         sb.append(args[j]).append(j == args.length - 1 ? "" : " ");
                     }
-                    p.userString = sb.toString().replace("\"", "").trim();
+                    String raw = sb.toString().trim();
+                    if (raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"")) {
+                        raw = raw.substring(1, raw.length() - 1).trim();
+                    }
+                    p.userString = raw;
                     break;
                 }
                 else if (a.startsWith("-")) {
@@ -453,15 +446,6 @@ public class BackupCommand extends CommandBase {
         return rawRef.replace("<", "").replace(">", "");
     }
 
-    private String inferAsciiIcon(String text) {
-        String lowered = text == null ? "" : text.toLowerCase();
-        if (lowered.contains("backup") || lowered.contains("save")) return "[SAVE] ";
-        if (lowered.contains("restore")) return "[RESTORE] ";
-        if (lowered.contains("details") || lowered.contains("status") || lowered.contains("list")) return "[INFO] ";
-        if (lowered.contains("failed") || lowered.contains("error")) return "[ERR] ";
-        return "[INFO] ";
-    }
-
     private void appendRemotePendingCommits(ICommandSender sender, File repoDir, int localCommitCount) {
         try {
             GitExecutor.GitResult branchResult = GitExecutor.execute(repoDir, 10, "rev-parse", "--abbrev-ref", "HEAD");
@@ -694,7 +678,7 @@ public class BackupCommand extends CommandBase {
             return;
         }
 
-        String formatted = TextFormatting.GOLD + "[yugetGIT]  " + TextFormatting.GRAY + inferAsciiIcon(message) + TextFormatting.LIGHT_PURPLE + message;
+        String formatted = TextFormatting.GOLD + "[yugetGIT]  " + TextFormatting.LIGHT_PURPLE + message;
         if (sender instanceof EntityPlayerMP) {
             EntityPlayerMP player = (EntityPlayerMP) sender;
             if (lower.contains("backup committed")) {

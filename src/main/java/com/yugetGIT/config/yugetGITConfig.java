@@ -17,9 +17,9 @@ public class yugetGITConfig {
         @Config.Comment("Enable auto-commit on world save after the first manual /yu backup save exists")
         public boolean autoCommitOnSave = false;
 
-        @Config.Comment("Minutes between automatic commits; 0 disables interval commits")
+        @Config.Comment("Backup interval in minutes for automatic backups; 0 disables interval-based backups")
         @Config.RangeInt(min = 0, max = 1440)
-        public int commitIntervalMinutes = 0;
+        public int backupIntervalMinutes = 0;
 
         @Config.Comment("When true, /yu backup save skips if player movement since last manual backup is minimal. Use /yu backup save --force to force.")
         public boolean manualSaveMovementGuardEnabled = true;
@@ -37,7 +37,10 @@ public class yugetGITConfig {
         public String defaultRemoteUrl = "";
 
         @Config.Comment("Automatically run git fetch --prune on world load and report result in chat")
-        public boolean autoFetchOnWorldStart = false;
+        public boolean autoFetchOnWorldStart = true;
+
+        @Config.Comment("Show the network timeout hint on every /yu fetch|push|pull|merge command. If false, show once per game session.")
+        public boolean showNetworkTimeoutHintEveryTime = false;
     }
 
     @SubscribeEvent
