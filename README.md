@@ -38,3 +38,4 @@ Stage 2:
 This projects has been able to be succesful because of:
 * pcal43 and his mod fastback! (https://github.com/pcal43/fastback)
 * Git, Git LFS, and their documentation
+* rayyankhan47 and his mod blockbase (https://github.com/rayyankhan47/Blockbase)

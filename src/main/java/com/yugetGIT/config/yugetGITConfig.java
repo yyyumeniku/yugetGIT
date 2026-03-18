@@ -12,6 +12,7 @@ public class yugetGITConfig {
 
     public static BackupSettings backup = new BackupSettings();
     public static GitNetworkSettings gitNetwork = new GitNetworkSettings();
+    public static VisualDiffSettings visualDiff = new VisualDiffSettings();
 
     public static class BackupSettings {
         @Config.Comment("Enable auto-commit on world save after the first manual /yu backup save exists")
@@ -47,6 +48,52 @@ public class yugetGITConfig {
 
         @Config.Comment("Show the network timeout hint on every /yu fetch|push|pull|merge command. If false, show once per game session.")
         public boolean showNetworkTimeoutHintEveryTime = false;
+    }
+
+    public static class VisualDiffSettings {
+        @Config.Comment("Enable /yu diff command flow")
+        public boolean enabled = true;
+
+        @Config.Comment("Automatically refresh visual diff snapshot while mode is ON")
+        public boolean autoRefresh = true;
+
+        @Config.Comment("Show visual diff HUD text")
+        public boolean hudEnabled = true;
+
+        @Config.Comment("Show modified blocks in visual diff counts/overlay")
+        public boolean showModified = true;
+
+        @Config.Comment("Maximum changed blocks rendered at once")
+        @Config.RangeInt(min = 64, max = 20000)
+        public int maxOverlayBlocks = 2500;
+
+        @Config.Comment("Maximum distance from player for visual diff overlays")
+        @Config.RangeInt(min = 16, max = 256)
+        public int maxOverlayDistanceBlocks = 96;
+
+        @Config.Comment("HUD X position (used when no anchor is set)")
+        @Config.RangeInt(min = 0, max = 10000)
+        public int hudX = 8;
+
+        @Config.Comment("HUD Y position (used when no anchor is set)")
+        @Config.RangeInt(min = 0, max = 10000)
+        public int hudY = 8;
+
+        @Config.Comment("Optional HUD left anchor; -1 disables")
+        @Config.RangeInt(min = -1, max = 10000)
+        public int hudLeftX = -1;
+
+        @Config.Comment("Optional HUD right anchor; -1 disables")
+        @Config.RangeInt(min = -1, max = 10000)
+        public int hudRightX = -1;
+
+        @Config.Comment("Optional HUD top anchor; -1 disables")
+        @Config.RangeInt(min = -1, max = 10000)
+        public int hudTopY = -1;
+
+        @Config.Comment("Optional HUD bottom anchor; -1 disables")
+        @Config.RangeInt(min = -1, max = 10000)
+        public int hudBottomY = -1;
     }
 
     @SubscribeEvent

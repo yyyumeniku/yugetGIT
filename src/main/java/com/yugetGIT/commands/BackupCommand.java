@@ -298,7 +298,7 @@ public class BackupCommand extends CommandBase {
                     return;
                 }
                 if (parsed.hash == null && parsed.count <= 0) {
-                    sender.sendMessage(formatMessage(TextFormatting.RED, "Specify a backup hash (-hash id) or backup number (-1 = first listed commit)."));
+                    sender.sendMessage(formatMessage(TextFormatting.RED, "Use -hash <id> or -(number) from /yu backup list."));
                     return;
                 }
 

@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import com.yugetGIT.util.BackgroundExecutor;
 import com.yugetGIT.util.SaveProgressTracker;
+import com.yugetGIT.core.mca.DirtyBlockIndex;
 import com.yugetGIT.core.mca.DirtyChunkIndex;
 import com.yugetGIT.core.mca.WorldSnapshotStager;
 import java.util.function.Consumer;
@@ -135,6 +136,7 @@ public class CommitBuilder {
                     feedback.accept("No changed chunks found.");
                     if (worldKey != null) {
                         DirtyChunkIndex.clearWorld(worldKey);
+                        DirtyBlockIndex.clearWorld(worldKey);
                     }
                     SaveProgressTracker.finish(true, "No changed chunks found.");
                     return;
@@ -176,6 +178,7 @@ public class CommitBuilder {
                     feedback.accept("No meaningful file changes to commit.");
                     if (worldKey != null) {
                         DirtyChunkIndex.clearWorld(worldKey);
+                        DirtyBlockIndex.clearWorld(worldKey);
                     }
                     SaveProgressTracker.finish(true, "No new changes.");
                     return;
@@ -207,6 +210,7 @@ public class CommitBuilder {
                     feedback.accept(String.format("Backup committed (%.2f MB)", backupSizeMb));
                     if (worldKey != null) {
                         DirtyChunkIndex.clearWorld(worldKey);
+                        DirtyBlockIndex.clearWorld(worldKey);
                     }
                     if (progress != null) {
                         progress.accept(new ProgressSnapshot("Committed", 100, stageResult.getChangedChunks(), stageResult.getBytesWritten()));
@@ -220,6 +224,7 @@ public class CommitBuilder {
                     feedback.accept("No new changes since last backup.");
                     if (worldKey != null) {
                         DirtyChunkIndex.clearWorld(worldKey);
+                        DirtyBlockIndex.clearWorld(worldKey);
                     }
                     SaveProgressTracker.finish(true, "No new changes.");
                 } else {

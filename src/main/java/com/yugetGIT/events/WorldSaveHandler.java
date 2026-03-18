@@ -5,6 +5,7 @@ import com.yugetGIT.config.yugetGITConfig;
 import com.yugetGIT.core.git.CommitBuilder;
 import com.yugetGIT.core.git.GitExecutor;
 import com.yugetGIT.core.git.RepoConfig;
+import com.yugetGIT.core.mca.DirtyBlockIndex;
 import com.yugetGIT.core.mca.DirtyChunkIndex;
 import com.yugetGIT.YugetGITMod;
 import com.yugetGIT.util.BackgroundExecutor;
@@ -64,6 +65,7 @@ public class WorldSaveHandler {
         String worldKey = worldDir.getName();
         worldLoadedAt.put(worldKey, System.currentTimeMillis());
         DirtyChunkIndex.clearWorld(worldKey);
+        DirtyBlockIndex.clearWorld(worldKey);
         autoFetchTriggeredWorlds.remove(worldKey);
 
         if (!StateProperties.isBackupsEnabled() || !yugetGITConfig.gitNetwork.autoFetchOnWorldStart) {
@@ -88,6 +90,7 @@ public class WorldSaveHandler {
 
         String worldKey = world.getSaveHandler().getWorldDirectory().getName();
         DirtyChunkIndex.clearWorld(worldKey);
+        DirtyBlockIndex.clearWorld(worldKey);
         worldLoadedAt.remove(worldKey);
         pendingAutoFetchWorlds.remove(worldKey);
         autoFetchTriggeredWorlds.remove(worldKey);

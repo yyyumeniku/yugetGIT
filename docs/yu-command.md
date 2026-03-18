@@ -5,6 +5,7 @@
 `/yu init`
 `/yu remote add <url>`
 `/yu backup <help|save|list|details|restore|worlds|status>`
+`/yu diff <on|off|status|refresh|clear>`
 `/yu debug-dialog`
 `/yu fetch [remote]`
 `/yu push [--force]`
@@ -38,6 +39,19 @@
 - `/yu fetch`
   - Runs `git fetch <remote> --prune` (default remote is `origin`).
 
+## Phase 2.6 Command
+- `/yu diff <on|off|status|refresh|clear>`
+  - Uses event-driven dirty block tracking and shows only real tracked block changes.
+  - `on`: computes and enables the current visual diff snapshot.
+  - `refresh`: recomputes current visual diff snapshot.
+  - `status`: prints current mode and `+ ~ -` counters.
+  - `off`: disables overlay/HUD mode (keeps tracked changes).
+  - `clear`: clears tracked block changes for the active world and disables diff mode.
+
+Visual diff settings and HUD placement:
+- Open from Forge ModList: `Mods -> yugetGIT -> Config`.
+- Use `Open HUD Placement Editor` button in that config screen.
+
 ## Phase 3 Commands
 - `/yu push`
   - Pushes active world branch to `origin`.
@@ -54,6 +68,12 @@ Network note:
 Config note (`run/config/yugetgit.cfg`):
 - `gitNetwork.yuCommandTimeoutSeconds`: timeout for `/yu` network commands.
 - `gitNetwork.allowInsecureTls`: when true, disables TLS certificate verification for `/yu` network commands (default is `false`).
+- `visualDiff.enabled`: enables/disables `/yu diff` command flow.
+- `visualDiff.hudEnabled`: shows/hides visual diff HUD text.
+- `visualDiff.showModified`: include/exclude modified blocks in visual diff counts and overlay.
+- `visualDiff.maxOverlayBlocks`: cap of blocks rendered in diff overlay.
+- `visualDiff.maxOverlayDistanceBlocks`: max player distance for `/yu diff` snapshot/overlay.
+- `visualDiff.hudX/hudY` and anchor fields: HUD placement values used by HUD editor.
 
 ## Reset Command
 - `/yu reset --hard <ref>`

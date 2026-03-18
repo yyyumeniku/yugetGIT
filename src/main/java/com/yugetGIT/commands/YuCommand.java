@@ -9,6 +9,7 @@ import com.yugetGIT.util.BackgroundExecutor;
 import com.yugetGIT.util.OsDetector;
 import com.yugetGIT.util.PlatformPaths;
 import com.yugetGIT.util.ProgressParser;
+import com.yugetGIT.util.VisualDiffSessionManager;
 import net.minecraft.command.CommandBase;
 import net.minecraft.command.CommandException;
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -92,7 +93,7 @@ public class YuCommand extends CommandBase {
 
     @Override
     public String getUsage(ICommandSender sender) {
-        return "/yu <help|init|remote|backup|debug-dialog|fetch|push|pull|merge|reset>";
+        return "/yu <help|init|remote|backup|diff|debug-dialog|fetch|push|pull|merge|reset>";
     }
 
     @Override
@@ -108,7 +109,7 @@ public class YuCommand extends CommandBase {
     @Override
     public List<String> getTabCompletions(MinecraftServer server, ICommandSender sender, String[] args, @Nullable BlockPos targetPos) {
         if (args.length == 1) {
-            return getListOfStringsMatchingLastWord(args, "help", "init", "remote", "backup", "debug-dialog", "fetch", "push", "pull", "merge", "reset");
+            return getListOfStringsMatchingLastWord(args, "help", "init", "remote", "backup", "diff", "debug-dialog", "fetch", "push", "pull", "merge", "reset");
         }
 
         if (args.length == 2 && "backup".equalsIgnoreCase(args[0])) {
@@ -129,6 +130,10 @@ public class YuCommand extends CommandBase {
 
         if (args.length == 2 && "fetch".equalsIgnoreCase(args[0])) {
             return getListOfStringsMatchingLastWord(args, "origin");
+        }
+
+        if (args.length == 2 && "diff".equalsIgnoreCase(args[0])) {
+            return Collections.emptyList();
         }
 
         if (args.length == 2 && "reset".equalsIgnoreCase(args[0])) {
@@ -175,6 +180,9 @@ public class YuCommand extends CommandBase {
                 return;
             case "remote":
                 runRepo(server, sender, parsed);
+                return;
+            case "diff":
+                runDiff(server, sender, parsed);
                 return;
             case "debug-dialog":
                 if (!parsed.positionals.isEmpty() || parsed.force || parsed.hard) {
@@ -225,12 +233,68 @@ public class YuCommand extends CommandBase {
         sendPlainLine(sender, TextFormatting.WHITE, "/yu init");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu remote add <url>");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu backup <help|save|list|details|restore|worlds|status>");
+        sendPlainLine(sender, TextFormatting.WHITE, "/yu diff");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu debug-dialog");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu fetch [remote]");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu push [--force]");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu pull [--hard]");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu merge");
         sendPlainLine(sender, TextFormatting.WHITE, "/yu reset --hard <ref>");
+    }
+
+    private void runDiff(MinecraftServer server, ICommandSender sender, ParsedArgs parsed) {
+        if (parsed.force || parsed.hard || !parsed.positionals.isEmpty()) {
+            sender.sendMessage(formatMessage(TextFormatting.RED, "Invalid /yu diff usage. Run /yu help."));
+            return;
+        }
+
+        if (!yugetGITConfig.visualDiff.enabled) {
+            sender.sendMessage(formatMessage(TextFormatting.YELLOW, "Visual diff is disabled in config."));
+            return;
+        }
+
+        String worldKey = resolveWorldKey(server);
+        if (worldKey == null || worldKey.trim().isEmpty()) {
+            sender.sendMessage(formatMessage(TextFormatting.RED, "Unable to resolve world for visual diff."));
+            return;
+        }
+
+        VisualDiffSessionManager.Mode currentMode = VisualDiffSessionManager.getMode(worldKey);
+        String action = currentMode == VisualDiffSessionManager.Mode.DIFF ? "off" : "on";
+
+        switch (action) {
+            case "on":
+                refreshVisualDiffSnapshot(sender, worldKey);
+                return;
+            case "off":
+                VisualDiffSessionManager.disable(worldKey);
+                return;
+            default:
+                sender.sendMessage(formatMessage(TextFormatting.RED, "Unknown /yu diff mode: " + action));
+                sender.sendMessage(plainMessage(TextFormatting.WHITE, "Use /yu diff."));
+        }
+    }
+
+    private void refreshVisualDiffSnapshot(ICommandSender sender, String worldKey) {
+        Integer centerX = null;
+        Integer centerY = null;
+        Integer centerZ = null;
+        if (sender.getCommandSenderEntity() instanceof EntityPlayerMP) {
+            EntityPlayerMP player = (EntityPlayerMP) sender.getCommandSenderEntity();
+            centerX = (int) Math.floor(player.posX);
+            centerY = (int) Math.floor(player.posY);
+            centerZ = (int) Math.floor(player.posZ);
+        }
+
+        VisualDiffSessionManager.DiffSnapshot snapshot = VisualDiffSessionManager.computeSnapshot(
+            worldKey,
+            centerX,
+            centerY,
+            centerZ,
+            yugetGITConfig.visualDiff.maxOverlayDistanceBlocks,
+            yugetGITConfig.visualDiff.maxOverlayBlocks
+        );
+        VisualDiffSessionManager.enable(worldKey, snapshot);
     }
 
     private void runBackupSubcommand(MinecraftServer server, ICommandSender sender, String[] args) throws CommandException {
